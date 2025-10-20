@@ -54,7 +54,7 @@ $query_tecnicos = "SELECT e.ID, e.Nombre, e.Email, r.Nombre as Rol,
                         (SELECT COUNT(*) FROM INCIDENCIA WHERE ID_Tecnico = e.ID AND ID_Stat IN (2, 3, 4)) as IncidenciasActivas
                   FROM EMPLEADO e
                   JOIN ROL r ON e.ID_Rol = r.ID
-                  WHERE r.Nombre = 'Técnico TI'
+                  WHERE r.Nombre = 'Técnico'
                   ORDER BY IncidenciasActivas ASC, e.Nombre ASC";
 $stmt_tecnicos = $conn->prepare($query_tecnicos);
 $stmt_tecnicos->execute();
