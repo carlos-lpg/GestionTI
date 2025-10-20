@@ -66,7 +66,7 @@ try {
         // Determinar la página de dashboard según el rol
         switch ($usuario->nombre_rol) {
             case 'Administrador':
-                header("Location: ../views/admin/gestion-ci.php");
+                header("Location: ../views/admin/dashboard.php");
                 break;
             case 'Coordinador TI CEDIS':
             case 'Coordinador TI Sucursales':

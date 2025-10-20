@@ -10,13 +10,13 @@ function active($page) {
 ?>
 
 <!-- Enlace al Dashboard siempre visible para todos los usuarios -->
-<!--
+
 <li class="nav-item">
     <a class="nav-link <?php echo active('dashboard.php'); ?>" href="dashboard.php">
         <i class="fas fa-tachometer-alt me-2"></i> Dashboard
     </a>
 </li>
--->
+
 <?php if (has_permission('admin')): ?>
 <!-- Enlaces específicos para Administradores -->
 
@@ -39,13 +39,13 @@ function active($page) {
 
 <?php if (has_permission('gestionar_incidencias')): ?>
 <!-- Enlaces para gestión de incidencias -->
- <!--
+ 
 <li class="nav-item">
     <a class="nav-link <?php echo active('incidencias.php'); ?>" href="incidencias.php">
         <i class="fas fa-ticket-alt me-2"></i> Gestión de Incidencias
     </a>
 </li>
--->
+
 <?php endif; ?>
 
 <?php if (has_permission('reportar_incidencia')): ?>
