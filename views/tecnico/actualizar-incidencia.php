@@ -1,7 +1,7 @@
 <?php
 // Incluir el encabezado y verificar permisos
 require_once '../../includes/header.php';
-check_permission('gestionar_incidencias');
+has_permission('gestionar_incidencias');
 
 // Incluir configuración de base de datos
 require_once '../../config/database.php';

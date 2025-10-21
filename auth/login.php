@@ -51,7 +51,7 @@ try {
         // Guardar datos básicos
         $_SESSION['user_id'] = $usuario->id;
         $_SESSION['username'] = $usuario->username;
-        $_SESSION['role_id'] = $usuario->id_rol;
+        $_SESSION['user_role'] = $usuario->id_rol;
         $_SESSION['role_name'] = $usuario->nombre_rol;
         $_SESSION['full_name'] = $usuario->nombre_empleado;
         $_SESSION['empleado_id'] = $usuario->id_empleado;
@@ -73,7 +73,7 @@ try {
             case 'Coordinador TI Corporativo':
                 header("Location: ../views/coordinador/dashboard.php");
                 break;
-            case 'Técnico TI':
+            case 'Técnico':
                 header("Location: ../views/tecnico/dashboard.php");
                 break;
             case 'Supervisor Infraestructura':

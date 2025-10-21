@@ -53,7 +53,7 @@ function has_permission($permission) {
         'Coordinador TI Corporativo' => ['gestionar_ci', 'gestionar_incidencias', 'gestionar_problemas', 'reportes'],
         'Supervisor Infraestructura' => ['gestionar_ci', 'gestionar_incidencias', 'gestionar_problemas', 'reportes'],
         'Supervisor Sistemas' => ['gestionar_ci', 'gestionar_incidencias', 'gestionar_problemas', 'reportes'],
-        'Técnico TI' => ['tecnico', 'gestionar_incidencias', 'gestionar_problemas'] // AGREGAR gestionar_problemas aquí
+        'Técnico' => ['tecnico', 'gestionar_incidencias', 'gestionar_problemas'] // AGREGAR gestionar_problemas aquí
     ];
     
     // Si es admin, tiene todos los permisos

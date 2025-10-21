@@ -3,7 +3,7 @@
 require_once '../../includes/header.php';
 
 // Verificar permiso de gestión de incidencias
-check_permission('gestionar_incidencias');
+has_permission('gestionar_incidencias');
 
 // Incluir configuración de base de datos
 require_once '../../config/database.php';

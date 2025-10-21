@@ -5,7 +5,7 @@ require_once '../../config/database.php';
 require_once '../../models/Incidencia.php';
 
 // Verificar permiso de gestión de incidencias
-check_permission('gestionar_incidencias');
+has_permission('gestionar_incidencias');
 
 // Verificar método POST
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
