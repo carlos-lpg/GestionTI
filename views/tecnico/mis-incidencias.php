@@ -3,7 +3,7 @@
 require_once '../../includes/header.php';
 
 // Verificar permiso de gestión de incidencias
-check_permission('gestionar_incidencias');
+has_permission('gestionar_incidencias');
 
 // Incluir configuración de base de datos
 require_once '../../config/database.php';
@@ -325,45 +325,6 @@ $estadisticas = $incidencia->getEstadisticas($_SESSION['empleado_id']);
                         No se encontraron incidencias asignadas con los filtros seleccionados.
                     </div>
                 <?php endif; ?>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Formulario rápido de actualización -->
-<div class="row mt-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Actualización Rápida de Incidencia</h5>
-            </div>
-            <div class="card-body">
-                <form action="procesar-actualizacion.php" method="POST">
-                    <div class="row">
-                        <div class="col-md-3 mb-3">
-                            <label for="id_incidencia" class="form-label">ID Incidencia</label>
-                            <input type="text" class="form-control" id="id_incidencia" name="id_incidencia" required>
-                        </div>
-                        <div class="col-md-3 mb-3">
-                            <label for="estado" class="form-label">Nuevo Estado</label>
-                            <select class="form-select" id="estado" name="estado" required>
-                                <option value="">Seleccionar...</option>
-                                <option value="3">En proceso</option>
-                                <option value="4">En espera</option>
-                                <option value="5">Resuelta</option>
-                            </select>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="comentario" class="form-label">Comentario</label>
-                            <input type="text" class="form-control" id="comentario" name="comentario" required>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-12">
-                            <button type="submit" class="btn btn-success">Actualizar Estado</button>
-                        </div>
-                    </div>
-                </form>
             </div>
         </div>
     </div>

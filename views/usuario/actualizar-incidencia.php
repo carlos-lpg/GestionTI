@@ -3,7 +3,7 @@
 require_once '../../includes/header.php';
 
 // Verificar permiso de gestión de incidencias
-check_permission('gestionar_incidencias');
+has_permission('gestionar_incidencias');
 
 // Incluir configuración de base de datos
 require_once '../../config/database.php';
@@ -49,8 +49,8 @@ $incidencia = $stmt->fetch(PDO::FETCH_ASSOC);
 
 // Verificar si la incidencia está asignada al técnico actual
 if ($incidencia['ID_Tecnico'] != $_SESSION['empleado_id'] && !has_permission('admin')) {
-    header("Location: mis-incidencias.php?error=permission_denied");
-    exit;
+  header("Location: mis-incidencias.php?error=permission_denied");
+  exit;
 }
 
 // Verificar que la incidencia no esté cerrada (ID_Stat = 6)
