@@ -2,8 +2,8 @@
 // Incluir el encabezado
 require_once '../../includes/header.php';
 
-// Verificar permiso de reportar incidencias
-check_permission('reportar_incidencia');
+// Verificar permiso de gestión de incidencias
+has_permission('gestionar_incidencias');
 
 // Incluir configuración de base de datos
 require_once '../../config/database.php';
@@ -20,18 +20,24 @@ $incidencia_id = intval($_GET['id']);
 $database = new Database();
 $conn = $database->getConnection();
 
-// Obtener detalles de la incidencia
+// Obtener detalles de la incidencia (INCLUYE CAMPOS DE ANÁLISIS Y CATEGORÍA)
 $query = "SELECT i.ID, i.Descripcion, i.FechaInicio, i.FechaTerminacion, 
                  i.ID_Prioridad, i.ID_CI, i.ID_Tecnico, i.ID_Stat, i.CreatedBy,
+                 i.ID_Categoria, i.TiempoEstimadoHoras, i.RequiereComponente, 
                  p.Descripcion as Prioridad, s.Descripcion as Estado,
                  ci.Nombre as CI_Nombre, t.Nombre as CI_Tipo,
-                 e.Nombre as Tecnico_Nombre, e.Email as Tecnico_Email
+                 emp.Nombre as Reportado_Por_Nombre, emp.Email as Reportado_Por_Email,
+                 e.Nombre as Tecnico_Nombre,
+                 cp.Nombre as Categoria_Descripcion
           FROM INCIDENCIA i
           LEFT JOIN PRIORIDAD p ON i.ID_Prioridad = p.ID
           LEFT JOIN ESTATUS_INCIDENCIA s ON i.ID_Stat = s.ID
           LEFT JOIN CI ci ON i.ID_CI = ci.ID
           LEFT JOIN TIPO_CI t ON ci.ID_TipoCI = t.ID
+          LEFT JOIN USUARIO u ON i.CreatedBy = u.ID
+          LEFT JOIN EMPLEADO emp ON u.ID_Empleado = emp.ID
           LEFT JOIN EMPLEADO e ON i.ID_Tecnico = e.ID
+          LEFT JOIN CATEGORIA_PROBLEMA cp ON i.ID_Categoria = cp.ID -- USANDO TU TABLA CORRECTA
           WHERE i.ID = ?";
 
 $stmt = $conn->prepare($query);
@@ -45,161 +51,94 @@ if ($stmt->rowCount() == 0) {
 
 $incidencia = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Verificar si la incidencia fue reportada por el usuario actual
-if ($incidencia['CreatedBy'] != $_SESSION['user_id']) {
+// Verificar si la incidencia está asignada al técnico actual (o es administrador)
+if ($incidencia['ID_Tecnico'] != $_SESSION['empleado_id'] && !has_permission('admin')) {
     header("Location: mis-incidencias.php?error=permission_denied");
     exit;
 }
 
-// Comprobar si la tabla de comentarios existe antes de consultarla
-$comentarios = [];
-$historiales = [];
-$solucion = null;
+// Obtener datos adicionales en paralelo
+$stmt_comentarios = $conn->prepare("SELECT c.ID, c.Comentario, c.TipoComentario, c.FechaRegistro, c.Publico, e.Nombre as NombreEmpleado FROM INCIDENCIA_COMENTARIO c LEFT JOIN USUARIO u ON c.ID_Usuario = u.ID LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID WHERE c.ID_Incidencia = ? ORDER BY c.FechaRegistro ASC");
+$stmt_historial = $conn->prepare("SELECT h.ID, h.ID_EstadoAnterior, h.ID_EstadoNuevo, h.FechaCambio, s1.Descripcion as EstadoAnterior, s2.Descripcion as EstadoNuevo, e.Nombre as NombreEmpleado FROM INCIDENCIA_HISTORIAL h LEFT JOIN ESTATUS_INCIDENCIA s1 ON h.ID_EstadoAnterior = s1.ID LEFT JOIN ESTATUS_INCIDENCIA s2 ON h.ID_EstadoNuevo = s2.ID LEFT JOIN USUARIO u ON h.ID_Usuario = u.ID LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID WHERE h.ID_Incidencia = ? ORDER BY h.FechaCambio ASC");
+$stmt_respuestas = $conn->prepare("SELECT r.ID, r.Respuesta, r.FechaRegistro, p.Pregunta, p.Tipo FROM CONTROL_RESPUESTA r JOIN CONTROL_PREGUNTA p ON r.ID_Pregunta = p.ID WHERE r.ID_Incidencia = ? ORDER BY p.Orden");
+$stmt_solucion = $conn->prepare("SELECT s.ID, s.Descripcion, s.FechaRegistro, e.Nombre as Tecnico FROM INCIDENCIA_SOLUCION s LEFT JOIN USUARIO u ON s.ID_Usuario = u.ID LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID WHERE s.ID_Incidencia = ? ORDER BY s.FechaRegistro DESC");
+
+// Obtener Solicitudes de Componente
+// NOTA: Esta consulta requiere que la tabla SOLICITUD_COMPONENTE exista.
+$stmt_solicitud = $conn->prepare("SELECT sc.ID, sc.ComponenteSolicitado, sc.Cantidad, sc.CostoMaximo, sc.ID_JefeAlmacen, 
+                                          sc.Estatus, e.Nombre as JefeAlmacenNombre,
+                                          ci.Nombre as ComponenteAsignadoNombre
+                                   FROM SOLICITUD_COMPONENTE sc
+                                   LEFT JOIN EMPLEADO e ON sc.ID_JefeAlmacen = e.ID
+                                   LEFT JOIN CI ci ON sc.ID_ComponenteAsignado = ci.ID
+                                   WHERE sc.ID_Incidencia = ? ORDER BY sc.FechaRegistro DESC");
+
+
+$stmt_comentarios->execute([$incidencia_id]);
+$stmt_historial->execute([$incidencia_id]);
+$stmt_respuestas->execute([$incidencia_id]);
+$stmt_solucion->execute([$incidencia_id]);
+$stmt_solicitud->execute([$incidencia_id]);
+$solucion = $stmt_solucion->fetch(PDO::FETCH_ASSOC);
+$solicitudes = $stmt_solicitud->fetchAll(PDO::FETCH_ASSOC);
+
+// Obtener evaluación si existe y el estado es 'Cerrada'
 $evaluacion = null;
-
-// Verificar si existe la tabla INCIDENCIA_COMENTARIO
-$check_table_query = "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'INCIDENCIA_COMENTARIO'";
-$check_table_stmt = $conn->prepare($check_table_query);
-$check_table_stmt->execute();
-$table_exists = ($check_table_stmt->rowCount() > 0);
-
-if ($table_exists) {
-    // Obtener comentarios públicos de la incidencia
-    $query_comentarios = "SELECT c.ID, c.Comentario, c.TipoComentario, c.FechaRegistro, 
-                               u.Username, e.Nombre as NombreEmpleado
-                        FROM INCIDENCIA_COMENTARIO c
-                        LEFT JOIN USUARIO u ON c.ID_Usuario = u.ID
-                        LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID
-                        WHERE c.ID_Incidencia = ? AND c.Publico = 1
-                        ORDER BY c.FechaRegistro ASC";
-    $stmt_comentarios = $conn->prepare($query_comentarios);
-    $stmt_comentarios->execute([$incidencia_id]);
-    $comentarios = $stmt_comentarios->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Obtener solución si existe
-    $query_solucion = "SELECT s.ID, s.Descripcion, s.FechaRegistro, e.Nombre as Tecnico
-                     FROM INCIDENCIA_SOLUCION s
-                     LEFT JOIN USUARIO u ON s.ID_Usuario = u.ID
-                     LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID
-                     WHERE s.ID_Incidencia = ?
-                     ORDER BY s.FechaRegistro DESC";
-    $stmt_solucion = $conn->prepare($query_solucion);
-    $stmt_solucion->execute([$incidencia_id]);
-    if ($stmt_solucion->rowCount() > 0) {
-        $solucion = $stmt_solucion->fetch(PDO::FETCH_ASSOC);
-    }
-    
-    // Obtener la evaluación si existe y el estado es 'Cerrada'
-    if ($incidencia['ID_Stat'] == 6) { // 6 = Cerrada
-        $query_evaluacion = "SELECT e.ID, e.Calificacion, e.Comentario, e.FechaRegistro
-                           FROM INCIDENCIA_EVALUACION e
-                           WHERE e.ID_Incidencia = ?";
-        $stmt_evaluacion = $conn->prepare($query_evaluacion);
-        $stmt_evaluacion->execute([$incidencia_id]);
-        if ($stmt_evaluacion->rowCount() > 0) {
-            $evaluacion = $stmt_evaluacion->fetch(PDO::FETCH_ASSOC);
-        }
+if ($incidencia['ID_Stat'] == 6) {
+    $stmt_evaluacion = $conn->prepare("SELECT e.ID, e.Calificacion, e.Comentario, e.FechaRegistro FROM INCIDENCIA_EVALUACION e WHERE e.ID_Incidencia = ?");
+    $stmt_evaluacion->execute([$incidencia_id]);
+    if ($stmt_evaluacion->rowCount() > 0) {
+        $evaluacion = $stmt_evaluacion->fetch(PDO::FETCH_ASSOC);
     }
 }
 
-// Verificar si existe la tabla INCIDENCIA_HISTORIAL
-$check_historial_table_query = "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'INCIDENCIA_HISTORIAL'";
-$check_historial_table_stmt = $conn->prepare($check_historial_table_query);
-$check_historial_table_stmt->execute();
-$historial_table_exists = ($check_historial_table_stmt->rowCount() > 0);
-
-if ($historial_table_exists) {
-    // Obtener historial de estados
-    $query_historial = "SELECT h.ID, h.ID_EstadoAnterior, h.ID_EstadoNuevo, h.FechaCambio,
-                             s1.Descripcion as EstadoAnterior, s2.Descripcion as EstadoNuevo,
-                             e.Nombre as NombreEmpleado
-                      FROM INCIDENCIA_HISTORIAL h
-                      LEFT JOIN ESTATUS_INCIDENCIA s1 ON h.ID_EstadoAnterior = s1.ID
-                      LEFT JOIN ESTATUS_INCIDENCIA s2 ON h.ID_EstadoNuevo = s2.ID
-                      LEFT JOIN USUARIO u ON h.ID_Usuario = u.ID
-                      LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID
-                      WHERE h.ID_Incidencia = ?
-                      ORDER BY h.FechaCambio ASC";
-    $stmt_historial = $conn->prepare($query_historial);
-    $stmt_historial->execute([$incidencia_id]);
-    $historiales = $stmt_historial->fetchAll(PDO::FETCH_ASSOC);
-}
-
-// Procesar el formulario de comentario si se envía y la tabla de comentarios existe
-if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] == 'agregar_comentario') {
-    try {
-        $comentario = $_POST['comentario'];
-        
-        if (!empty($comentario)) {
-            $query_insert = "INSERT INTO INCIDENCIA_COMENTARIO (ID_Incidencia, ID_Usuario, Comentario, TipoComentario, FechaRegistro, Publico) 
-                            VALUES (?, ?, ?, 'COMENTARIO', GETDATE(), 1)";
-            $stmt_insert = $conn->prepare($query_insert);
-            
-            if ($stmt_insert->execute([$incidencia_id, $_SESSION['user_id'], $comentario])) {
-                header("Location: ver-incidencia.php?id=$incidencia_id&success=comment_added");
-                exit;
-            } else {
-                $error = "Error al guardar el comentario.";
-            }
+// Procesar el formulario de comentario si se envía
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] == 'agregar_comentario') {
+    $comentario = $_POST['comentario'];
+    $publico = isset($_POST['publico']) ? 1 : 0;
+    
+    if (!empty($comentario)) {
+        $stmt_insert = $conn->prepare("INSERT INTO INCIDENCIA_COMENTARIO (ID_Incidencia, ID_Usuario, Comentario, TipoComentario, FechaRegistro, Publico) VALUES (?, ?, ?, 'COMENTARIO', GETDATE(), ?)");
+        if ($stmt_insert->execute([$incidencia_id, $_SESSION['user_id'], $comentario, $publico])) {
+            header("Location: ver-incidencia.php?id=$incidencia_id&success=comment_added");
+            exit;
         } else {
-            $error = "El comentario no puede estar vacío.";
+            $error = "Error al guardar el comentario.";
         }
-    } catch (PDOException $e) {
-        $error = "Error en la base de datos: " . $e->getMessage();
+    } else {
+        $error = "El comentario no puede estar vacío.";
     }
 }
 ?>
 
-<!-- Título de la página -->
 <h1 class="h2">Detalles de Incidencia #<?php echo $incidencia_id; ?></h1>
 
-<!-- Botones de acción -->
 <div class="row mb-4">
     <div class="col-12">
         <a href="mis-incidencias.php" class="btn btn-secondary">
             <i class="fas fa-arrow-left me-2"></i>Volver a mis incidencias
         </a>
         
-        <?php if ($incidencia['ID_Stat'] == 5): // 5 = Resuelta ?>
-        <a href="liberar-incidencia.php?id=<?php echo $incidencia_id; ?>" class="btn btn-success ms-2">
-            <i class="fas fa-check-circle me-2"></i>Liberar Incidencia
-        </a>
-        <?php endif; ?>
-        
-        <?php if ($incidencia['ID_Stat'] == 5 || ($incidencia['ID_Stat'] == 6 && !$evaluacion)): // 5 = Resuelta, 6 = Cerrada sin evaluación ?>
-        <a href="evaluar-incidencia.php?id=<?php echo $incidencia_id; ?>" class="btn btn-primary ms-2">
-            <i class="fas fa-star me-2"></i>Evaluar Resolución
+        <?php if (in_array($incidencia['ID_Stat'], [2, 3, 4])): ?>
+        <a href="actualizar-incidencia.php?id=<?php echo $incidencia_id; ?>" class="btn btn-primary ms-2">
+            <i class="fas fa-edit me-2"></i>Actualizar Estado / Análisis
         </a>
         <?php endif; ?>
     </div>
 </div>
 
+<?php if (isset($_GET['success']) && $_GET['success'] == 'updated'): ?>
+    <div class="alert alert-success">La incidencia se ha actualizado correctamente.</div>
+<?php endif; ?>
+
 <?php if (isset($_GET['success']) && $_GET['success'] == 'comment_added'): ?>
-    <div class="alert alert-success">
-        <i class="fas fa-check-circle me-2"></i>Comentario agregado correctamente.
-    </div>
+    <div class="alert alert-success">Comentario agregado correctamente.</div>
 <?php endif; ?>
 
-<?php if (isset($_GET['error'])): ?>
-    <div class="alert alert-danger">
-        <i class="fas fa-exclamation-circle me-2"></i>
-        <?php 
-        $error_type = $_GET['error'];
-        switch ($error_type) {
-            case 'not_resolved':
-                echo 'La incidencia aún no está resuelta.';
-                break;
-            case 'already_evaluated':
-                echo 'Esta incidencia ya ha sido evaluada.';
-                break;
-            default:
-                echo isset($error) ? $error : 'Ha ocurrido un error.';
-        }
-        ?>
-    </div>
+<?php if (isset($error)): ?>
+    <div class="alert alert-danger"><?php echo $error; ?></div>
 <?php endif; ?>
 
-<!-- Información general de la incidencia -->
 <div class="row">
     <div class="col-12">
         <div class="card mb-4">
@@ -211,29 +150,22 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                     <div class="col-md-6">
                         <table class="table table-borderless">
                             <tr>
-                                <th class="w-25">ID:</th>
+                                <th>ID:</th>
                                 <td>#<?php echo $incidencia['ID']; ?></td>
                             </tr>
                             <tr>
                                 <th>Estado:</th>
                                 <td>
                                     <?php 
-                                    $estado = htmlspecialchars($incidencia['Estado']);
+                                    $estado = $incidencia['Estado'];
                                     $badgeClass = 'bg-info';
                                     
-                                    if ($estado === 'Nueva') {
-                                        $badgeClass = 'bg-danger';
-                                    } elseif ($estado === 'Asignada') {
-                                        $badgeClass = 'bg-primary';
-                                    } elseif ($estado === 'En proceso') {
-                                        $badgeClass = 'bg-warning text-dark';
-                                    } elseif ($estado === 'En espera') {
-                                        $badgeClass = 'bg-secondary';
-                                    } elseif ($estado === 'Resuelta') {
-                                        $badgeClass = 'bg-success';
-                                    } elseif ($estado === 'Cerrada') {
-                                        $badgeClass = 'bg-dark';
-                                    }
+                                    if ($estado === 'Nueva') $badgeClass = 'bg-danger';
+                                    elseif ($estado === 'Asignada') $badgeClass = 'bg-primary';
+                                    elseif ($estado === 'En proceso') $badgeClass = 'bg-warning text-dark';
+                                    elseif ($estado === 'En espera') $badgeClass = 'bg-secondary';
+                                    elseif ($estado === 'Resuelta') $badgeClass = 'bg-success';
+                                    elseif ($estado === 'Cerrada') $badgeClass = 'bg-dark';
                                     
                                     echo "<span class='badge $badgeClass'>$estado</span>";
                                     ?>
@@ -243,16 +175,12 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                                 <th>Prioridad:</th>
                                 <td>
                                     <?php 
-                                    $prioridad = htmlspecialchars($incidencia['Prioridad']);
+                                    $prioridad = $incidencia['Prioridad'];
                                     $badgeClass = 'bg-info';
                                     
-                                    if ($prioridad === 'Crítica') {
-                                        $badgeClass = 'bg-danger';
-                                    } elseif ($prioridad === 'Alta') {
-                                        $badgeClass = 'bg-warning text-dark';
-                                    } elseif ($prioridad === 'Media') {
-                                        $badgeClass = 'bg-primary';
-                                    }
+                                    if ($prioridad === 'Crítica') $badgeClass = 'bg-danger';
+                                    elseif ($prioridad === 'Alta') $badgeClass = 'bg-warning text-dark';
+                                    elseif ($prioridad === 'Media') $badgeClass = 'bg-primary';
                                     
                                     echo "<span class='badge $badgeClass'>$prioridad</span>";
                                     ?>
@@ -267,24 +195,52 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                                     <?php echo htmlspecialchars($incidencia['CI_Nombre']); ?>
                                 </td>
                             </tr>
+                            <tr>
+                                <th>Reportado por:</th>
+                                <td>
+                                    <?php echo htmlspecialchars($incidencia['Reportado_Por_Nombre'] ?? 'Desconocido'); ?>
+                                    <?php if (!empty($incidencia['Reportado_Por_Email'])): ?>
+                                        <br><small><a href="mailto:<?php echo htmlspecialchars($incidencia['Reportado_Por_Email']); ?>"><?php echo htmlspecialchars($incidencia['Reportado_Por_Email']); ?></a></small>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
                         </table>
                     </div>
                     <div class="col-md-6">
                         <table class="table table-borderless">
                             <tr>
-                                <th class="w-25">Fecha de reporte:</th>
+                                <th>Fecha de reporte:</th>
                                 <td><?php echo date('d/m/Y H:i', strtotime($incidencia['FechaInicio'])); ?></td>
                             </tr>
                             <tr>
                                 <th>Técnico asignado:</th>
+                                <td><?php echo htmlspecialchars($incidencia['Tecnico_Nombre'] ?? 'Sin asignar'); ?></td>
+                            </tr>
+                            <tr>
+                                <th>Categoría:</th>
                                 <td>
-                                    <?php if ($incidencia['Tecnico_Nombre']): ?>
-                                        <?php echo htmlspecialchars($incidencia['Tecnico_Nombre']); ?>
-                                        <?php if (isset($incidencia['Tecnico_Email']) && $incidencia['Tecnico_Email']): ?>
-                                            <br><small><a href="mailto:<?php echo htmlspecialchars($incidencia['Tecnico_Email']); ?>"><?php echo htmlspecialchars($incidencia['Tecnico_Email']); ?></a></small>
-                                        <?php endif; ?>
+                                    <?php echo htmlspecialchars($incidencia['Categoria_Descripcion'] ?? 'Pendiente de Clasificación'); ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Tiempo Estimado:</th>
+                                <td>
+                                    <?php if ($incidencia['TiempoEstimadoHoras']): ?>
+                                        <span class="badge bg-primary"><?php echo htmlspecialchars($incidencia['TiempoEstimadoHoras']); ?> hora(s)</span>
                                     <?php else: ?>
-                                        <span class="text-muted">Sin asignar</span>
+                                        <span class="text-muted">Pendiente de Estimación</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Requiere Componente:</th>
+                                <td>
+                                    <?php if ($incidencia['RequiereComponente'] === 1): ?>
+                                        <span class="badge bg-danger">SÍ</span>
+                                    <?php elseif ($incidencia['RequiereComponente'] === 0): ?>
+                                        <span class="badge bg-success">NO</span>
+                                    <?php else: ?>
+                                        <span class="badge bg-secondary">Pendiente de Análisis</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -304,10 +260,7 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                                         echo "En curso: ";
                                     }
                                     
-                                    if ($intervalo->days > 0) {
-                                        echo $intervalo->days . " día(s) ";
-                                    }
-                                    
+                                    if ($intervalo->days > 0) echo $intervalo->days . " día(s) ";
                                     echo $intervalo->h . " hora(s) " . $intervalo->i . " min";
                                     ?>
                                 </td>
@@ -325,77 +278,112 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                         </table>
                     </div>
                 </div>
+                
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <h6>Descripción del problema:</h6>
+                        <p><?php echo nl2br(htmlspecialchars($incidencia['Descripcion'])); ?></p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Descripción del problema -->
+<?php if (!empty($solicitudes)): ?>
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Solicitudes de Componente</h5>
+                <?php if ($incidencia['ID_Stat'] != 5 && $incidencia['ID_Stat'] != 6 && $incidencia['RequiereComponente'] === 1): ?>
+                    <a href="solicitar-componente.php?id=<?php echo $incidencia_id; ?>" class="btn btn-sm btn-warning">
+                        <i class="fas fa-plus me-1"></i>Nueva Solicitud
+                    </a>
+                <?php endif; ?>
+            </div>
+            <div class="card-body">
+                <?php foreach ($solicitudes as $solicitud): ?>
+                    <div class="alert alert-<?php 
+                        if ($solicitud['Estatus'] == 'Aprobada') echo 'success';
+                        elseif ($solicitud['Estatus'] == 'Rechazada') echo 'danger';
+                        else echo 'secondary';
+                    ?>">
+                        <p class="mb-1">
+                            <strong>Componente Solicitado:</strong> <?php echo htmlspecialchars($solicitud['ComponenteSolicitado']); ?> 
+                            (Cantidad: <?php echo $solicitud['Cantidad']; ?>)
+                        </p>
+                        <p class="mb-1">
+                            <strong>Costo Máximo:</strong> $<?php echo number_format($solicitud['CostoMaximo'], 2); ?>
+                        </p>
+                        <p class="mb-1">
+                            <strong>Estatus:</strong> 
+                            <span class="badge bg-<?php 
+                                if ($solicitud['Estatus'] == 'Aprobada') echo 'success';
+                                elseif ($solicitud['Estatus'] == 'Rechazada') echo 'danger';
+                                else echo 'secondary';
+                            ?>"><?php echo htmlspecialchars($solicitud['Estatus']); ?></span>
+                        </p>
+                        <?php if ($solicitud['Estatus'] == 'Aprobada'): ?>
+                            <p class="mb-0">
+                                **Componente Asignado:** <?php echo htmlspecialchars($solicitud['ComponenteAsignadoNombre'] ?? 'N/A'); ?> 
+                                (Por: <?php echo htmlspecialchars($solicitud['JefeAlmacenNombre'] ?? 'Almacén'); ?>)
+                            </p>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </div>
+</div>
+<?php elseif ($incidencia['RequiereComponente'] === 1 && $incidencia['ID_Stat'] != 5 && $incidencia['ID_Stat'] != 6): ?>
+    <div class="alert alert-warning text-center">
+        <p class="mb-2">El análisis indica que se requiere un componente para resolver esta incidencia.</p>
+        <a href="solicitar-componente.php?id=<?php echo $incidencia_id; ?>" class="btn btn-warning">
+            <i class="fas fa-tools me-2"></i>**Crear Solicitud de Componente (Paso 7)**
+        </a>
+    </div>
+<?php endif; ?>
+<?php if ($stmt_respuestas->rowCount() > 0): ?>
 <div class="row">
     <div class="col-12">
         <div class="card mb-4">
             <div class="card-header">
-                <h5 class="mb-0">Descripción del Problema</h5>
+                <h5 class="mb-0">Preguntas de Control</h5>
             </div>
             <div class="card-body">
-                <?php
-                // Procesar la descripción para extraer la información adicional
-                $descripcion_completa = $incidencia['Descripcion'];
-                $partes = explode("Información adicional:", $descripcion_completa);
-                
-                $descripcion_principal = isset($partes[0]) ? trim($partes[0]) : $descripcion_completa;
-                $info_adicional = isset($partes[1]) ? trim($partes[1]) : '';
-                
-                // Mostrar la descripción principal
-                echo '<div class="mb-4">';
-                echo '<h6>Descripción del problema:</h6>';
-                echo '<p>' . nl2br(htmlspecialchars($descripcion_principal)) . '</p>';
-                echo '</div>';
-                
-                // Si hay información adicional, mostrarla como una tabla
-                if (!empty($info_adicional)) {
-                    echo '<div class="mb-4">';
-                    echo '<h6>Información adicional:</h6>';
-                    echo '<div class="table-responsive">';
-                    echo '<table class="table table-striped">';
-                    
-                    // Procesar cada línea de información adicional
-                    $lineas = explode("\n", $info_adicional);
-                    foreach ($lineas as $linea) {
-                        $linea = trim($linea);
-                        if (empty($linea)) continue;
-                        
-                        if (strpos($linea, '- ') === 0) {
-                            $linea = substr($linea, 2); // Quitar el guión inicial
-                        }
-                        
-                        $datos = explode(':', $linea, 2);
-                        if (count($datos) >= 2) {
-                            $clave = trim($datos[0]);
-                            $valor = trim($datos[1]);
-                            
-                            echo '<tr>';
-                            echo '<th width="30%">' . htmlspecialchars($clave) . '</th>';
-                            echo '<td>' . htmlspecialchars($valor) . '</td>';
-                            echo '</tr>';
-                        } else {
-                            echo '<tr><td colspan="2">' . htmlspecialchars($linea) . '</td></tr>';
-                        }
-                    }
-                    
-                    echo '</table>';
-                    echo '</div>';
-                    echo '</div>';
-                }
-                ?>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Pregunta</th>
+                            <th>Respuesta</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php while ($respuesta = $stmt_respuestas->fetch(PDO::FETCH_ASSOC)): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($respuesta['Pregunta']); ?></td>
+                                <td>
+                                    <?php 
+                                    if ($respuesta['Tipo'] == 'SI_NO') {
+                                        echo $respuesta['Respuesta'] == 'SI' ? 
+                                             '<span class="badge bg-success">Sí</span>' : 
+                                             '<span class="badge bg-danger">No</span>';
+                                    } else {
+                                        echo htmlspecialchars($respuesta['Respuesta']);
+                                    }
+                                    ?>
+                                </td>
+                            </tr>
+                        <?php endwhile; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 </div>
+<?php endif; ?>
 
-<?php if ($table_exists): ?>
-
-<!-- Solución aplicada (si existe) -->
 <?php if ($solucion): ?>
 <div class="row">
     <div class="col-12">
@@ -405,8 +393,8 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
             </div>
             <div class="card-body">
                 <div class="alert alert-success">
-                    <p class="mb-2"><strong>Aplicada por:</strong> <?php echo htmlspecialchars($solucion['Tecnico']); ?></p>
-                    <p class="mb-2"><strong>Fecha:</strong> <?php echo date('d/m/Y H:i', strtotime($solucion['FechaRegistro'])); ?></p>
+                    <p><strong>Aplicada por:</strong> <?php echo htmlspecialchars($solucion['Tecnico'] ?? 'No especificado'); ?></p>
+                    <p><strong>Fecha:</strong> <?php echo date('d/m/Y H:i', strtotime($solucion['FechaRegistro'])); ?></p>
                     <hr>
                     <p class="mb-0"><?php echo nl2br(htmlspecialchars($solucion['Descripcion'])); ?></p>
                 </div>
@@ -416,13 +404,123 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
 </div>
 <?php endif; ?>
 
-<!-- Evaluación del Servicio (si existe) -->
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Comentarios y Seguimiento</h5>
+            </div>
+            <div class="card-body">
+                <?php if ($stmt_comentarios->rowCount() > 0): ?>
+                    <div class="comentarios-container">
+                        <?php while ($comentario = $stmt_comentarios->fetch(PDO::FETCH_ASSOC)): ?>
+                            <div class="comentario mb-3">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <span>
+                                            <strong><?php echo htmlspecialchars($comentario['NombreEmpleado'] ?? 'Usuario'); ?></strong>
+                                            <?php if ($comentario['TipoComentario'] !== 'COMENTARIO'): ?>
+                                                <span class="badge bg-info"><?php echo htmlspecialchars($comentario['TipoComentario']); ?></span>
+                                            <?php endif; ?>
+                                            <?php if ($comentario['Publico'] == 0): ?>
+                                                <span class="badge bg-warning text-dark">Privado</span>
+                                            <?php endif; ?>
+                                        </span>
+                                        <small class="text-muted"><?php echo date('d/m/Y H:i', strtotime($comentario['FechaRegistro'])); ?></small>
+                                    </div>
+                                    <div class="card-body">
+                                        <p class="card-text"><?php echo nl2br(htmlspecialchars($comentario['Comentario'])); ?></p>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endwhile; ?>
+                    </div>
+                <?php else: ?>
+                    <div class="alert alert-info">No hay comentarios registrados para esta incidencia.</div>
+                <?php endif; ?>
+                
+                <?php if ($incidencia['ID_Stat'] != 6): // No permitir comentarios en incidencias cerradas ?>
+                <div class="mt-4">
+                    <h6>Agregar Comentario</h6>
+                    <form action="" method="POST">
+                        <input type="hidden" name="action" value="agregar_comentario">
+                        <div class="mb-3">
+                            <textarea class="form-control" name="comentario" id="comentario" rows="3" required placeholder="Escriba su comentario aquí..."></textarea>
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" name="publico" id="publico" value="1" checked>
+                            <label class="form-check-label" for="publico">Visible para el usuario</label>
+                            <small class="form-text text-muted d-block">Desmarque esta opción si el comentario es solo para el equipo técnico.</small>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Enviar Comentario</button>
+                    </form>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div>
+
+<?php if ($stmt_historial->rowCount() > 0): ?>
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Historial de Estados</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Estado Anterior</th>
+                            <th>Nuevo Estado</th>
+                            <th>Actualizado por</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php while ($historial = $stmt_historial->fetch(PDO::FETCH_ASSOC)): ?>
+                            <tr>
+                                <td><?php echo date('d/m/Y H:i', strtotime($historial['FechaCambio'])); ?></td>
+                                <td>
+                                    <?php if ($historial['EstadoAnterior']): ?>
+                                        <span class="badge bg-secondary"><?php echo htmlspecialchars($historial['EstadoAnterior']); ?></span>
+                                    <?php else: ?>
+                                        <span class="badge bg-secondary">Inicio</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php 
+                                    $estado = htmlspecialchars($historial['EstadoNuevo']);
+                                    $badgeClass = 'bg-info';
+                                    
+                                    if ($estado === 'Nueva') $badgeClass = 'bg-danger';
+                                    elseif ($estado === 'Asignada') $badgeClass = 'bg-primary';
+                                    elseif ($estado === 'En proceso') $badgeClass = 'bg-warning text-dark';
+                                    elseif ($estado === 'En espera') $badgeClass = 'bg-secondary';
+                                    elseif ($estado === 'Resuelta') $badgeClass = 'bg-success';
+                                    elseif ($estado === 'Cerrada') $badgeClass = 'bg-dark';
+                                    
+                                    echo "<span class='badge $badgeClass'>$estado</span>";
+                                    ?>
+                                </td>
+                                <td><?php echo htmlspecialchars($historial['NombreEmpleado'] ?? 'Usuario'); ?></td>
+                            </tr>
+                        <?php endwhile; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
 <?php if ($evaluacion): ?>
 <div class="row">
     <div class="col-12">
         <div class="card mb-4">
             <div class="card-header">
-                <h5 class="mb-0">Su Evaluación del Servicio</h5>
+                <h5 class="mb-0">Evaluación del Servicio</h5>
             </div>
             <div class="card-body">
                 <div class="row">
@@ -432,11 +530,9 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                             <?php
                             $calificacion = intval($evaluacion['Calificacion']);
                             for ($i = 1; $i <= 5; $i++) {
-                                if ($i <= $calificacion) {
-                                    echo '<i class="fas fa-star text-warning"></i>';
-                                } else {
-                                    echo '<i class="far fa-star text-warning"></i>';
-                                }
+                                echo $i <= $calificacion ? 
+                                     '<i class="fas fa-star text-warning"></i>' : 
+                                     '<i class="far fa-star text-warning"></i>';
                             }
                             ?>
                             <span class="badge bg-primary ms-2"><?php echo $calificacion; ?> de 5</span>
@@ -451,7 +547,7 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
                 <?php if (!empty($evaluacion['Comentario'])): ?>
                 <div class="row mt-3">
                     <div class="col-12">
-                        <h6>Sus comentarios:</h6>
+                        <h6>Comentarios del usuario:</h6>
                         <p><?php echo nl2br(htmlspecialchars($evaluacion['Comentario'])); ?></p>
                     </div>
                 </div>
@@ -462,137 +558,10 @@ if ($table_exists && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['acti
 </div>
 <?php endif; ?>
 
-<!-- Comentarios y Seguimiento -->
-<div class="row">
-    <div class="col-12">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Comentarios y Seguimiento</h5>
-            </div>
-            <div class="card-body">
-                <?php if (!empty($comentarios)): ?>
-                    <div class="comentarios-container">
-                        <?php foreach ($comentarios as $comentario): ?>
-                            <div class="comentario <?php echo $comentario['Username'] == $_SESSION['username'] ? 'comentario-propio' : ''; ?> mb-3">
-                                <div class="card">
-                                    <div class="card-header d-flex justify-content-between align-items-center">
-                                        <span>
-                                            <strong><?php echo htmlspecialchars($comentario['NombreEmpleado']); ?></strong>
-                                            <?php if ($comentario['TipoComentario'] !== 'COMENTARIO'): ?>
-                                                <span class="badge bg-info"><?php echo htmlspecialchars($comentario['TipoComentario']); ?></span>
-                                            <?php endif; ?>
-                                        </span>
-                                        <small class="text-muted"><?php echo date('d/m/Y H:i', strtotime($comentario['FechaRegistro'])); ?></small>
-                                    </div>
-                                    <div class="card-body">
-                                        <p class="card-text"><?php echo nl2br(htmlspecialchars($comentario['Comentario'])); ?></p>
-                                    </div>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php else: ?>
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle me-2"></i>
-                        <?php if (!$table_exists): ?>
-                            El sistema de comentarios aún no está disponible.
-                        <?php else: ?>
-                            No hay comentarios registrados para esta incidencia.
-                        <?php endif; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <!-- Formulario para agregar comentarios (solo si no está cerrada y la tabla existe) -->
-                <?php if ($table_exists && $incidencia['ID_Stat'] != 6): // No permitir comentarios en incidencias cerradas ?>
-                <div class="mt-4">
-                    <h6>Agregar Comentario</h6>
-                    <form action="" method="POST">
-                        <input type="hidden" name="action" value="agregar_comentario">
-                        <div class="mb-3">
-                            <textarea class="form-control" name="comentario" id="comentario" rows="3" required placeholder="Escriba su comentario aquí..."></textarea>
-                        </div>
-                        <button type="submit" class="btn btn-primary">Enviar Comentario</button>
-                    </form>
-                </div>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Historial de Estados -->
-<?php if (!empty($historiales)): ?>
-<div class="row">
-    <div class="col-12">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5 class="mb-0">Historial de Estados</h5>
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead>
-                            <tr>
-                                <th>Fecha</th>
-                                <th>Estado Anterior</th>
-                                <th>Nuevo Estado</th>
-                                <th>Actualizado por</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($historiales as $historial): ?>
-                                <tr>
-                                    <td><?php echo date('d/m/Y H:i', strtotime($historial['FechaCambio'])); ?></td>
-                                    <td>
-                                        <?php if ($historial['EstadoAnterior']): ?>
-                                            <span class="badge bg-secondary"><?php echo htmlspecialchars($historial['EstadoAnterior']); ?></span>
-                                        <?php else: ?>
-                                            <span class="badge bg-secondary">Inicio</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php 
-                                        $estado = htmlspecialchars($historial['EstadoNuevo']);
-                                        $badgeClass = 'bg-info';
-                                        
-                                        if ($estado === 'Nueva') {
-                                            $badgeClass = 'bg-danger';
-                                        } elseif ($estado === 'Asignada') {
-                                            $badgeClass = 'bg-primary';
-                                        } elseif ($estado === 'En proceso') {
-                                            $badgeClass = 'bg-warning text-dark';
-                                        } elseif ($estado === 'En espera') {
-                                            $badgeClass = 'bg-secondary';
-                                        } elseif ($estado === 'Resuelta') {
-                                            $badgeClass = 'bg-success';
-                                        } elseif ($estado === 'Cerrada') {
-                                            $badgeClass = 'bg-dark';
-                                        }
-                                        
-                                        echo "<span class='badge $badgeClass'>$estado</span>";
-                                        ?>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($historial['NombreEmpleado']); ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-<?php endif; ?>
-
-<?php endif; // fin del bloque if ($table_exists) ?>
-
 <style>
 .comentario-propio .card {
     background-color: #f8f9fa;
 }
 </style>
 
-<?php
-// Incluir el pie de página
-require_once '../../includes/footer.php';
-?>
+<?php require_once '../../includes/footer.php'; ?>

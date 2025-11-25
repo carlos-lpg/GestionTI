@@ -20,13 +20,15 @@ $incidencia_id = intval($_GET['id']);
 $database = new Database();
 $conn = $database->getConnection();
 
-// Obtener detalles de la incidencia
+// Obtener detalles de la incidencia (INCLUYE CAMPOS DE ANÁLISIS Y CATEGORÍA)
 $query = "SELECT i.ID, i.Descripcion, i.FechaInicio, i.FechaTerminacion, 
                  i.ID_Prioridad, i.ID_CI, i.ID_Tecnico, i.ID_Stat, i.CreatedBy,
+                 i.ID_Categoria, i.TiempoEstimadoHoras, i.RequiereComponente, 
                  p.Descripcion as Prioridad, s.Descripcion as Estado,
                  ci.Nombre as CI_Nombre, t.Nombre as CI_Tipo,
                  emp.Nombre as Reportado_Por_Nombre, emp.Email as Reportado_Por_Email,
-                 e.Nombre as Tecnico_Nombre
+                 e.Nombre as Tecnico_Nombre,
+                 cp.Nombre as Categoria_Descripcion
           FROM INCIDENCIA i
           LEFT JOIN PRIORIDAD p ON i.ID_Prioridad = p.ID
           LEFT JOIN ESTATUS_INCIDENCIA s ON i.ID_Stat = s.ID
@@ -35,6 +37,7 @@ $query = "SELECT i.ID, i.Descripcion, i.FechaInicio, i.FechaTerminacion,
           LEFT JOIN USUARIO u ON i.CreatedBy = u.ID
           LEFT JOIN EMPLEADO emp ON u.ID_Empleado = emp.ID
           LEFT JOIN EMPLEADO e ON i.ID_Tecnico = e.ID
+          LEFT JOIN CATEGORIA_PROBLEMA cp ON i.ID_Categoria = cp.ID -- USANDO TU TABLA CORRECTA
           WHERE i.ID = ?";
 
 $stmt = $conn->prepare($query);
@@ -60,11 +63,24 @@ $stmt_historial = $conn->prepare("SELECT h.ID, h.ID_EstadoAnterior, h.ID_EstadoN
 $stmt_respuestas = $conn->prepare("SELECT r.ID, r.Respuesta, r.FechaRegistro, p.Pregunta, p.Tipo FROM CONTROL_RESPUESTA r JOIN CONTROL_PREGUNTA p ON r.ID_Pregunta = p.ID WHERE r.ID_Incidencia = ? ORDER BY p.Orden");
 $stmt_solucion = $conn->prepare("SELECT s.ID, s.Descripcion, s.FechaRegistro, e.Nombre as Tecnico FROM INCIDENCIA_SOLUCION s LEFT JOIN USUARIO u ON s.ID_Usuario = u.ID LEFT JOIN EMPLEADO e ON u.ID_Empleado = e.ID WHERE s.ID_Incidencia = ? ORDER BY s.FechaRegistro DESC");
 
+// Obtener Solicitudes de Componente
+// NOTA: Esta consulta requiere que la tabla SOLICITUD_COMPONENTE exista.
+$stmt_solicitud = $conn->prepare("SELECT sc.ID, sc.ComponenteSolicitado, sc.Cantidad, sc.CostoMaximo, sc.ID_JefeAlmacen, 
+                                          sc.Estatus, e.Nombre as JefeAlmacenNombre,
+                                          ci.Nombre as ComponenteAsignadoNombre
+                                   FROM SOLICITUD_COMPONENTE sc
+                                   LEFT JOIN EMPLEADO e ON sc.ID_JefeAlmacen = e.ID
+                                   LEFT JOIN CI ci ON sc.ID_ComponenteAsignado = ci.ID
+                                   WHERE sc.ID_Incidencia = ? ORDER BY sc.FechaRegistro DESC");
+
+
 $stmt_comentarios->execute([$incidencia_id]);
 $stmt_historial->execute([$incidencia_id]);
 $stmt_respuestas->execute([$incidencia_id]);
 $stmt_solucion->execute([$incidencia_id]);
+$stmt_solicitud->execute([$incidencia_id]);
 $solucion = $stmt_solucion->fetch(PDO::FETCH_ASSOC);
+$solicitudes = $stmt_solicitud->fetchAll(PDO::FETCH_ASSOC);
 
 // Obtener evaluación si existe y el estado es 'Cerrada'
 $evaluacion = null;
@@ -95,10 +111,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 }
 ?>
 
-<!-- Título de la página -->
 <h1 class="h2">Detalles de Incidencia #<?php echo $incidencia_id; ?></h1>
 
-<!-- Botones de acción -->
 <div class="row mb-4">
     <div class="col-12">
         <a href="mis-incidencias.php" class="btn btn-secondary">
@@ -107,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         
         <?php if (in_array($incidencia['ID_Stat'], [2, 3, 4])): ?>
         <a href="actualizar-incidencia.php?id=<?php echo $incidencia_id; ?>" class="btn btn-primary ms-2">
-            <i class="fas fa-edit me-2"></i>Actualizar Estado
+            <i class="fas fa-edit me-2"></i>Actualizar Estado / Análisis
         </a>
         <?php endif; ?>
     </div>
@@ -125,7 +139,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     <div class="alert alert-danger"><?php echo $error; ?></div>
 <?php endif; ?>
 
-<!-- Información general de la incidencia -->
 <div class="row">
     <div class="col-12">
         <div class="card mb-4">
@@ -204,6 +217,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <td><?php echo htmlspecialchars($incidencia['Tecnico_Nombre'] ?? 'Sin asignar'); ?></td>
                             </tr>
                             <tr>
+                                <th>Categoría:</th>
+                                <td>
+                                    <?php echo htmlspecialchars($incidencia['Categoria_Descripcion'] ?? 'Pendiente de Clasificación'); ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Tiempo Estimado:</th>
+                                <td>
+                                    <?php if ($incidencia['TiempoEstimadoHoras']): ?>
+                                        <span class="badge bg-primary"><?php echo htmlspecialchars($incidencia['TiempoEstimadoHoras']); ?> hora(s)</span>
+                                    <?php else: ?>
+                                        <span class="text-muted">Pendiente de Estimación</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Requiere Componente:</th>
+                                <td>
+                                    <?php if ($incidencia['RequiereComponente'] === 1): ?>
+                                        <span class="badge bg-danger">SÍ</span>
+                                    <?php elseif ($incidencia['RequiereComponente'] === 0): ?>
+                                        <span class="badge bg-success">NO</span>
+                                    <?php else: ?>
+                                        <span class="badge bg-secondary">Pendiente de Análisis</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
                                 <th>Tiempo transcurrido:</th>
                                 <td>
                                     <?php
@@ -249,7 +290,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </div>
 </div>
 
-<!-- Preguntas de Control -->
+<?php if (!empty($solicitudes)): ?>
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Solicitudes de Componente</h5>
+                <?php if ($incidencia['ID_Stat'] != 5 && $incidencia['ID_Stat'] != 6 && $incidencia['RequiereComponente'] === 1): ?>
+                    <a href="solicitar-componente.php?id=<?php echo $incidencia_id; ?>" class="btn btn-sm btn-warning">
+                        <i class="fas fa-plus me-1"></i>Nueva Solicitud
+                    </a>
+                <?php endif; ?>
+            </div>
+            <div class="card-body">
+                <?php foreach ($solicitudes as $solicitud): ?>
+                    <div class="alert alert-<?php 
+                        if ($solicitud['Estatus'] == 'Aprobada') echo 'success';
+                        elseif ($solicitud['Estatus'] == 'Rechazada') echo 'danger';
+                        else echo 'secondary';
+                    ?>">
+                        <p class="mb-1">
+                            <strong>Componente Solicitado:</strong> <?php echo htmlspecialchars($solicitud['ComponenteSolicitado']); ?> 
+                            (Cantidad: <?php echo $solicitud['Cantidad']; ?>)
+                        </p>
+                        <p class="mb-1">
+                            <strong>Costo Máximo:</strong> $<?php echo number_format($solicitud['CostoMaximo'], 2); ?>
+                        </p>
+                        <p class="mb-1">
+                            <strong>Estatus:</strong> 
+                            <span class="badge bg-<?php 
+                                if ($solicitud['Estatus'] == 'Aprobada') echo 'success';
+                                elseif ($solicitud['Estatus'] == 'Rechazada') echo 'danger';
+                                else echo 'secondary';
+                            ?>"><?php echo htmlspecialchars($solicitud['Estatus']); ?></span>
+                        </p>
+                        <?php if ($solicitud['Estatus'] == 'Aprobada'): ?>
+                            <p class="mb-0">
+                                **Componente Asignado:** <?php echo htmlspecialchars($solicitud['ComponenteAsignadoNombre'] ?? 'N/A'); ?> 
+                                (Por: <?php echo htmlspecialchars($solicitud['JefeAlmacenNombre'] ?? 'Almacén'); ?>)
+                            </p>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </div>
+</div>
+<?php elseif ($incidencia['RequiereComponente'] === 1 && $incidencia['ID_Stat'] != 5 && $incidencia['ID_Stat'] != 6): ?>
+    <div class="alert alert-warning text-center">
+        <p class="mb-2">El análisis indica que se requiere un componente para resolver esta incidencia.</p>
+        <a href="solicitar-componente.php?id=<?php echo $incidencia_id; ?>" class="btn btn-warning">
+            <i class="fas fa-tools me-2"></i>**Crear Solicitud de Componente (Paso 7)**
+        </a>
+    </div>
+<?php endif; ?>
 <?php if ($stmt_respuestas->rowCount() > 0): ?>
 <div class="row">
     <div class="col-12">
@@ -290,7 +384,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 </div>
 <?php endif; ?>
 
-<!-- Solución -->
 <?php if ($solucion): ?>
 <div class="row">
     <div class="col-12">
@@ -311,7 +404,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 </div>
 <?php endif; ?>
 
-<!-- Comentarios y Seguimiento -->
 <div class="row">
     <div class="col-12">
         <div class="card mb-4">
@@ -347,7 +439,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     <div class="alert alert-info">No hay comentarios registrados para esta incidencia.</div>
                 <?php endif; ?>
                 
-                <!-- Formulario para agregar comentarios -->
                 <?php if ($incidencia['ID_Stat'] != 6): // No permitir comentarios en incidencias cerradas ?>
                 <div class="mt-4">
                     <h6>Agregar Comentario</h6>
@@ -370,7 +461,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </div>
 </div>
 
-<!-- Historial de Estados -->
 <?php if ($stmt_historial->rowCount() > 0): ?>
 <div class="row">
     <div class="col-12">
@@ -425,7 +515,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 </div>
 <?php endif; ?>
 
-<!-- Evaluación del Servicio -->
 <?php if ($evaluacion): ?>
 <div class="row">
     <div class="col-12">

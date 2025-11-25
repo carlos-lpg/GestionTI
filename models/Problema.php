@@ -30,6 +30,7 @@ class Problema {
     public $impacto;
     public $estado;
     public $responsable_nombre;
+    public $responsable_rol; // <--- AGREGADO: Nueva propiedad
     
     // Constructor con conexión a la base de datos
     public function __construct($db) {
@@ -37,7 +38,7 @@ class Problema {
     }
     
     /**
-     * Obtener todos los problemas con filtros opcionales
+     * Obtener todos los problemas con filtros opcionales (Incluye Rol de Responsable)
      * @param array $filtros Array asociativo con los filtros a aplicar
      * @return PDOStatement Resultado de la consulta
      */
@@ -46,13 +47,15 @@ class Problema {
         $query = "SELECT p.ID, p.Titulo, p.Descripcion, p.FechaIdentificacion, p.FechaResolucion,
                          pri.Descripcion as Prioridad, cat.Nombre as Categoria, 
                          imp.Descripcion as Impacto, s.Descripcion as Estado,
-                         e.Nombre as ResponsableNombre
+                         e.Nombre as ResponsableNombre, e.ID as ResponsableID,
+                         r.Nombre as ResponsableRol -- <--- CAMBIO: Se agrega el Rol
                   FROM " . $this->table_name . " p
                   LEFT JOIN PRIORIDAD pri ON p.ID_Prioridad = pri.ID
                   LEFT JOIN CATEGORIA_PROBLEMA cat ON p.ID_Categoria = cat.ID
                   LEFT JOIN IMPACTO imp ON p.ID_Impacto = imp.ID
                   LEFT JOIN ESTATUS_PROBLEMA s ON p.ID_Stat = s.ID
                   LEFT JOIN EMPLEADO e ON p.ID_Responsable = e.ID
+                  LEFT JOIN ROL r ON e.ID_Rol = r.ID -- <--- CAMBIO: JOIN a ROL
                   WHERE 1=1";
         
         $params = [];
@@ -73,9 +76,13 @@ class Problema {
             $params[] = $filtros['categoria'];
         }
         
-        if(isset($filtros['responsable']) && !empty($filtros['responsable'])) {
-            $query .= " AND p.ID_Responsable = ?";
-            $params[] = $filtros['responsable'];
+        if(isset($filtros['responsable'])) {
+            if ($filtros['responsable'] === 'null') {
+                $query .= " AND p.ID_Responsable IS NULL";
+            } elseif (!empty($filtros['responsable'])) {
+                $query .= " AND p.ID_Responsable = ?";
+                $params[] = $filtros['responsable'];
+            }
         }
         
         if(isset($filtros['busqueda']) && !empty($filtros['busqueda'])) {
@@ -98,15 +105,19 @@ class Problema {
     }
     
 /**
- * Obtener un problema por su ID
+ * Obtener un problema por su ID (Incluye Rol de Responsable)
  * @param integer $id ID del problema
  * @return boolean True si se encontró el problema
  */
 public function getById($id) {
-    $query = "SELECT ID, Titulo, Descripcion, FechaIdentificacion, FechaResolucion,
-                     ID_Prioridad, ID_Categoria, ID_Impacto, ID_Stat, ID_Responsable, 
-                     CreatedBy, CreatedDate, ModifiedBy, ModifiedDate
-              FROM PROBLEMA WHERE ID = ?";
+    $query = "SELECT p.ID, p.Titulo, p.Descripcion, p.FechaIdentificacion, p.FechaResolucion,
+                     p.ID_Prioridad, p.ID_Categoria, p.ID_Impacto, p.ID_Stat, p.ID_Responsable, 
+                     p.CreatedBy, p.CreatedDate, p.ModifiedBy, p.ModifiedDate,
+                     r.Nombre as ResponsableRol -- <--- CAMBIO: Se obtiene el Rol del Responsable
+              FROM PROBLEMA p
+              LEFT JOIN EMPLEADO e ON p.ID_Responsable = e.ID
+              LEFT JOIN ROL r ON e.ID_Rol = r.ID
+              WHERE p.ID = ?";
     
     try {
         $stmt = $this->conn->prepare($query);
@@ -131,6 +142,8 @@ public function getById($id) {
             $this->created_date = $row['CreatedDate'];
             $this->modified_by = $row['ModifiedBy'];
             $this->modified_date = $row['ModifiedDate'];
+            $this->responsable_rol = $row['ResponsableRol']; // <--- CAMBIO: Asignar Rol
+
             
             // Obtener datos relacionados
             if ($this->id_categoria) {
@@ -169,6 +182,7 @@ public function getById($id) {
                 }
             }
             
+            // Obtener Nombre del Responsable
             if ($this->id_responsable) {
                 try {
                     $respQuery = "SELECT Nombre FROM EMPLEADO WHERE ID = ?";
@@ -230,6 +244,7 @@ public function getById($id) {
      * @return boolean True si se actualizó correctamente
      */
     public function update() {
+        // La lógica del update se mantiene igual
         $query = "UPDATE " . $this->table_name . " 
                   SET Titulo = ?, Descripcion = ?, ID_Prioridad = ?, 
                       ID_Categoria = ?, ID_Impacto = ?, ID_Stat = ?,
@@ -269,6 +284,7 @@ public function getById($id) {
      * @return boolean True si se eliminó correctamente
      */
     public function delete($id) {
+        // La lógica de eliminación se mantiene igual
         // Primero verificar si hay relaciones con incidencias
         $incidenciasQuery = "SELECT COUNT(*) as total FROM PROBLEMA_INCIDENCIA WHERE ID_Problema = ?";
         $incStmt = $this->conn->prepare($incidenciasQuery);
@@ -307,6 +323,24 @@ public function getById($id) {
         return $stmt->execute([$id]);
     }
     
+    /**
+     * Asignar responsable a un problema (Usado en asignación rápida)
+     * @param integer $problema_id ID del problema
+     * @param integer $empleado_id ID del empleado que será responsable
+     * @param integer $modified_by ID del usuario que realiza la acción
+     * @return boolean True si se actualizó correctamente
+     */
+    public function asignarResponsable($problema_id, $empleado_id, $modified_by) { // <--- NUEVO MÉTODO
+        $query = "UPDATE " . $this->table_name . " 
+                  SET ID_Responsable = ?, ModifiedBy = ?, ModifiedDate = GETDATE() 
+                  WHERE ID = ?";
+        
+        // Preparar la consulta
+        $stmt = $this->conn->prepare($query);
+        
+        // Ejecutar la consulta
+        return $stmt->execute([$empleado_id, $modified_by, $problema_id]);
+    }
 
 
   /**
@@ -317,6 +351,7 @@ public function getById($id) {
  * @return boolean True si se creó correctamente
  */
 public function asignarIncidencia($problema_id, $incidencia_id, $created_by) {
+    // La lógica de asignación de incidencia se mantiene igual
     // Primero verificar que la incidencia existe
     $checkIncidenciaQuery = "SELECT COUNT(*) as total FROM INCIDENCIA WHERE ID = ?";
     $checkIncidenciaStmt = $this->conn->prepare($checkIncidenciaQuery);
@@ -355,6 +390,7 @@ public function asignarIncidencia($problema_id, $incidencia_id, $created_by) {
      * @return boolean True si se eliminó correctamente
      */
     public function desasignarIncidencia($problema_id, $incidencia_id) {
+        // La lógica de desasignación se mantiene igual
         $query = "DELETE FROM PROBLEMA_INCIDENCIA WHERE ID_Problema = ? AND ID_Incidencia = ?";
         
         // Preparar la consulta
@@ -365,93 +401,43 @@ public function asignarIncidencia($problema_id, $incidencia_id, $created_by) {
     }
     
     /**
-     * Obtener incidencias relacionadas con un problema
+     * Obtener incidencias relacionadas con un problema - VERSIÓN MODIFICADA para incluir Reportado_Por
      * @param integer $problema_id ID del problema
-     * @return PDOStatement Resultado de la consulta
+     * @return array Array con los datos de las incidencias
      */
-/**
- * Obtener incidencias relacionadas con un problema - VERSIÓN SIMPLIFICADA
- * @param integer $problema_id ID del problema
- * @return array Array con los datos de las incidencias
- */
-public function getIncidenciasAsociadas($problema_id) {
-    // Primero obtener los IDs de las incidencias asociadas
-    $queryRelaciones = "SELECT ID_Incidencia FROM PROBLEMA_INCIDENCIA WHERE ID_Problema = ?";
-    $stmtRelaciones = $this->conn->prepare($queryRelaciones);
-    $stmtRelaciones->execute([$problema_id]);
-    
-    $incidencias = [];
-    
-    while ($relacion = $stmtRelaciones->fetch(PDO::FETCH_ASSOC)) {
-        $incidencia_id = $relacion['ID_Incidencia'];
+    public function getIncidenciasAsociadas($problema_id) {
+        // Subconsulta que trae todos los datos necesarios en un solo golpe
+        $query = "
+            SELECT 
+                i.ID, i.Descripcion, i.FechaInicio, i.FechaTerminacion, i.ID_Prioridad, 
+                i.ID_Stat, i.ID_CI, i.ID_Tecnico, 
+                p.Descripcion as Prioridad, 
+                s.Descripcion as Estado,
+                ci.Nombre as CI_Nombre, 
+                t.Nombre as CI_Tipo,
+                eTecnico.Nombre as Tecnico,
+                eReporta.Nombre as Reportado_Por -- <--- CAMBIO: Nombre del empleado que reportó
+            FROM PROBLEMA_INCIDENCIA pi
+            JOIN INCIDENCIA i ON pi.ID_Incidencia = i.ID
+            LEFT JOIN PRIORIDAD p ON i.ID_Prioridad = p.ID
+            LEFT JOIN ESTATUS_INCIDENCIA s ON i.ID_Stat = s.ID
+            LEFT JOIN CI ci ON i.ID_CI = ci.ID
+            LEFT JOIN TIPO_CI t ON ci.ID_TipoCI = t.ID
+            LEFT JOIN EMPLEADO eTecnico ON i.ID_Tecnico = eTecnico.ID
+            LEFT JOIN USUARIO uReporta ON i.CreatedBy = uReporta.ID
+            LEFT JOIN EMPLEADO eReporta ON uReporta.ID_Empleado = eReporta.ID -- <--- CAMBIO: Join para Reportado_Por
+            WHERE pi.ID_Problema = ?
+            ORDER BY i.FechaInicio DESC
+        ";
+
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$problema_id]);
         
-        // Obtener datos básicos de la incidencia
-        $queryIncidencia = "SELECT ID, Descripcion, FechaInicio, FechaTerminacion, 
-                                  ID_Prioridad, ID_Stat, ID_CI, ID_Tecnico 
-                           FROM INCIDENCIA WHERE ID = ?";
-        $stmtIncidencia = $this->conn->prepare($queryIncidencia);
-        $stmtIncidencia->execute([$incidencia_id]);
-        
-        if ($datosIncidencia = $stmtIncidencia->fetch(PDO::FETCH_ASSOC)) {
-            // Obtener datos relacionados por separado
-            $incidencia = $datosIncidencia;
-            
-            // Obtener prioridad
-            if ($incidencia['ID_Prioridad']) {
-                $queryPrioridad = "SELECT Descripcion FROM PRIORIDAD WHERE ID = ?";
-                $stmtPrioridad = $this->conn->prepare($queryPrioridad);
-                $stmtPrioridad->execute([$incidencia['ID_Prioridad']]);
-                $prioridad = $stmtPrioridad->fetch(PDO::FETCH_ASSOC);
-                $incidencia['Prioridad'] = $prioridad ? $prioridad['Descripcion'] : 'Sin prioridad';
-            } else {
-                $incidencia['Prioridad'] = 'Sin prioridad';
-            }
-            
-            // Obtener estado
-            if ($incidencia['ID_Stat']) {
-                $queryEstado = "SELECT Descripcion FROM ESTATUS_INCIDENCIA WHERE ID = ?";
-                $stmtEstado = $this->conn->prepare($queryEstado);
-                $stmtEstado->execute([$incidencia['ID_Stat']]);
-                $estado = $stmtEstado->fetch(PDO::FETCH_ASSOC);
-                $incidencia['Estado'] = $estado ? $estado['Descripcion'] : 'Sin estado';
-            } else {
-                $incidencia['Estado'] = 'Sin estado';
-            }
-            
-            // Obtener CI
-            if ($incidencia['ID_CI']) {
-                $queryCI = "SELECT ci.Nombre, t.Nombre as TipoCI 
-                           FROM CI ci 
-                           LEFT JOIN TIPO_CI t ON ci.ID_TipoCI = t.ID 
-                           WHERE ci.ID = ?";
-                $stmtCI = $this->conn->prepare($queryCI);
-                $stmtCI->execute([$incidencia['ID_CI']]);
-                $ci = $stmtCI->fetch(PDO::FETCH_ASSOC);
-                $incidencia['CI_Nombre'] = $ci ? $ci['Nombre'] : 'Sin CI';
-                $incidencia['CI_Tipo'] = $ci ? $ci['TipoCI'] : null;
-            } else {
-                $incidencia['CI_Nombre'] = 'Sin CI';
-                $incidencia['CI_Tipo'] = null;
-            }
-            
-            // Obtener técnico
-            if ($incidencia['ID_Tecnico']) {
-                $queryTecnico = "SELECT Nombre FROM EMPLEADO WHERE ID = ?";
-                $stmtTecnico = $this->conn->prepare($queryTecnico);
-                $stmtTecnico->execute([$incidencia['ID_Tecnico']]);
-                $tecnico = $stmtTecnico->fetch(PDO::FETCH_ASSOC);
-                $incidencia['Tecnico'] = $tecnico ? $tecnico['Nombre'] : 'Sin asignar';
-            } else {
-                $incidencia['Tecnico'] = 'Sin asignar';
-            }
-            
-            $incidencias[] = $incidencia;
-        }
+        $incidencias = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Devolvemos un objeto que simule PDOStatement para compatibilidad con el código cliente
+        return $this->arrayToPDOStatement($incidencias);
     }
-    
-    // Crear un objeto que simule PDOStatement para compatibilidad
-    return $this->arrayToPDOStatement($incidencias);
-}
 
 /**
  * Convertir array a objeto que simula PDOStatement
@@ -493,6 +479,7 @@ private function arrayToPDOStatement($data) {
      * @return boolean True si se agregó correctamente
      */
     public function agregarComentario($problema_id, $usuario_id, $comentario, $tipo_comentario = 'COMENTARIO') {
+        // La lógica de comentarios se mantiene igual
         $query = "INSERT INTO PROBLEMA_COMENTARIO (ID_Problema, ID_Usuario, Comentario, TipoComentario, FechaRegistro) 
                   VALUES (?, ?, ?, ?, GETDATE())";
         
@@ -512,6 +499,7 @@ private function arrayToPDOStatement($data) {
      * @return boolean True si se registró correctamente
      */
     public function registrarCambioEstado($problema_id, $estado_anterior, $estado_nuevo, $usuario_id) {
+        // La lógica de historial se mantiene igual
         $query = "INSERT INTO PROBLEMA_HISTORIAL (ID_Problema, ID_EstadoAnterior, ID_EstadoNuevo, ID_Usuario, FechaCambio) 
                   VALUES (?, ?, ?, ?, GETDATE())";
         
@@ -532,6 +520,7 @@ private function arrayToPDOStatement($data) {
      * @return boolean True si se agregó correctamente
      */
     public function agregarSolucionPropuesta($problema_id, $titulo, $descripcion, $tipo_solucion, $usuario_id) {
+        // La lógica de solución propuesta se mantiene igual
         $query = "INSERT INTO PROBLEMA_SOLUCION_PROPUESTA 
                   (ID_Problema, Titulo, Descripcion, TipoSolucion, ID_Usuario, FechaRegistro) 
                   VALUES (?, ?, ?, ?, ?, GETDATE())";
@@ -544,16 +533,12 @@ private function arrayToPDOStatement($data) {
     }
     
     /**
-     * Obtener soluciones propuestas para un problema
-     * @param integer $problema_id ID del problema
-     * @return PDOStatement Resultado de la consulta
-     */
- /**
  * Obtener soluciones propuestas para un problema - VERSIÓN SIMPLIFICADA
  * @param integer $problema_id ID del problema
  * @return object Objeto que simula PDOStatement
  */
 public function getSolucionesPropuestas($problema_id) {
+    // La lógica de soluciones propuestas se mantiene igual
     // Obtener soluciones propuestas básicas
     $querySoluciones = "SELECT ID, Titulo, Descripcion, TipoSolucion, ID_Usuario, FechaRegistro 
                        FROM PROBLEMA_SOLUCION_PROPUESTA 
@@ -586,16 +571,12 @@ public function getSolucionesPropuestas($problema_id) {
     return $this->arrayToPDOStatement($soluciones);
 }
     /**
-     * Obtener comentarios de un problema
-     * @param integer $problema_id ID del problema
-     * @return PDOStatement Resultado de la consulta
-     */
- /**
  * Obtener comentarios de un problema - VERSIÓN SIMPLIFICADA
  * @param integer $problema_id ID del problema
  * @return object Objeto que simula PDOStatement
  */
 public function getComentarios($problema_id) {
+    // La lógica de comentarios se mantiene igual
     // Obtener comentarios básicos
     $queryComentarios = "SELECT ID, Comentario, TipoComentario, ID_Usuario, FechaRegistro 
                         FROM PROBLEMA_COMENTARIO 
@@ -634,6 +615,7 @@ public function getComentarios($problema_id) {
  * @return object Objeto que simula PDOStatement
  */
 public function getHistorialEstados($problema_id) {
+    // La lógica de historial se mantiene igual
     // Obtener historial básico
     $queryHistorial = "SELECT ID, ID_EstadoAnterior, ID_EstadoNuevo, ID_Usuario, FechaCambio 
                       FROM PROBLEMA_HISTORIAL 
@@ -693,6 +675,7 @@ public function getHistorialEstados($problema_id) {
      * @return PDOStatement Resultado de la consulta
      */
     public function getCategorias() {
+        // La lógica de categorías se mantiene igual
         $query = "SELECT ID, Nombre, Descripcion FROM CATEGORIA_PROBLEMA ORDER BY Nombre";
         
         // Preparar la consulta
@@ -709,6 +692,7 @@ public function getHistorialEstados($problema_id) {
      * @return PDOStatement Resultado de la consulta
      */
     public function getImpactos() {
+        // La lógica de impacto se mantiene igual
         $query = "SELECT ID, Descripcion FROM IMPACTO ORDER BY ID";
         
         // Preparar la consulta
@@ -725,6 +709,7 @@ public function getHistorialEstados($problema_id) {
      * @return PDOStatement Resultado de la consulta
      */
     public function getEstados() {
+        // La lógica de estados se mantiene igual
         $query = "SELECT ID, Descripcion FROM ESTATUS_PROBLEMA ORDER BY ID";
         
         // Preparar la consulta
@@ -741,12 +726,13 @@ public function getHistorialEstados($problema_id) {
      * @return PDOStatement Resultado de la consulta
      */
     public function getResponsablesPotenciales() {
+        // La lógica de responsables potenciales se mantiene igual
         $query = "SELECT e.ID, e.Nombre, e.Email, r.Nombre as Rol 
                   FROM EMPLEADO e
                   JOIN ROL r ON e.ID_Rol = r.ID
                   WHERE r.Nombre IN ('Coordinador TI CEDIS', 'Coordinador TI Sucursales', 
                                      'Coordinador TI Corporativo', 'Supervisor Infraestructura', 
-                                     'Supervisor Sistemas')
+                                     'Supervisor Sistemas', 'Técnico') -- Agregando Técnico como potencial responsable
                   ORDER BY e.Nombre";
         
         // Preparar la consulta
@@ -766,6 +752,7 @@ public function getHistorialEstados($problema_id) {
      * @return boolean True si se actualizó correctamente
      */
     public function cambiarEstado($id, $id_stat, $modified_by) {
+        // La lógica de cambio de estado se mantiene igual
         $query = "UPDATE " . $this->table_name . " 
                   SET ID_Stat = ?, ModifiedBy = ?, ModifiedDate = GETDATE() 
                   WHERE ID = ?";
@@ -791,6 +778,7 @@ public function getHistorialEstados($problema_id) {
      * @return array Estadísticas
      */
     public function getEstadisticas($responsable_id = null) {
+        // La lógica de estadísticas se mantiene igual
         // Preparar array de resultados
         $estadisticas = [];
         

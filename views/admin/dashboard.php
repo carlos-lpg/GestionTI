@@ -46,7 +46,6 @@ check_permission('admin');
 
 <div class="row my-4">
     <!-- Tarjeta de Reportes -->
-    <!--
     <div class="col-md-6">
         <div class="card card-dashboard">
             <div class="card-body">
@@ -56,10 +55,8 @@ check_permission('admin');
             </div>
         </div>
     </div>
-    -->
 
     <!-- Tarjeta de Configuración -->
-    <!--
     <div class="col-md-6">
         <div class="card card-dashboard">
             <div class="card-body">
@@ -69,7 +66,6 @@ check_permission('admin');
             </div>
         </div>
     </div>
-    -->
 </div>
 
 <!-- Resumen de estadísticas -->

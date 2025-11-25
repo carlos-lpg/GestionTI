@@ -64,13 +64,13 @@ function active($page) {
 
 <?php if (has_permission('ver_reportes')): ?>
 <!-- Enlaces para reportes -->
- <!--
+
 <li class="nav-item">
     <a class="nav-link <?php echo active('reportes.php'); ?>" href="reportes.php">
         <i class="fas fa-chart-bar me-2"></i> Reportes
     </a>
 </li>
--->
+
 <?php endif; ?>
 <?php if (has_permission('gestionar_ci')): ?>
 <!--

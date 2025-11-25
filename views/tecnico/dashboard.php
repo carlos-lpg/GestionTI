@@ -104,10 +104,8 @@ $stmt_problemas_estadisticas->execute([$tecnico_id]);
 $estadisticas_problemas = $stmt_problemas_estadisticas->fetch(PDO::FETCH_ASSOC);
 ?>
 
-<!-- Título de la página -->
 <h1 class="h2">Panel de Técnico</h1>
 
-<!-- Mensajes de éxito o error -->
 <?php if (isset($_GET['success'])): ?>
     <div class="alert alert-success">
         <?php
@@ -141,7 +139,6 @@ $estadisticas_problemas = $stmt_problemas_estadisticas->fetch(PDO::FETCH_ASSOC);
     </div>
 <?php endif; ?>
 
-<!-- Tarjetas de resumen de incidencias -->
 <div class="row mb-4">
     <div class="col-xl-3 col-md-6 mb-4">
         <div class="card border-left-primary h-100 py-2">
@@ -208,7 +205,6 @@ $estadisticas_problemas = $stmt_problemas_estadisticas->fetch(PDO::FETCH_ASSOC);
     </div>
 </div>
 
-<!-- NUEVA SECCIÓN: Tarjetas de resumen de problemas -->
 <div class="row mb-4">
     <div class="col-xl-3 col-md-6 mb-4">
         <div class="card border-left-warning h-100 py-2">
@@ -275,17 +271,23 @@ $estadisticas_problemas = $stmt_problemas_estadisticas->fetch(PDO::FETCH_ASSOC);
     </div>
 </div>
 
-<!-- Accesos directos -->
 <div class="row mb-4">
     <div class="col-md-4">
         <div class="card card-dashboard">
             <div class="card-body">
                 <h5 class="card-title">Gestión de Incidencias</h5>
                 <p class="card-text">Acceda a todas las incidencias asignadas a usted.</p>
-                <a href="mis-incidencias.php" class="btn btn-primary">
+                <a href="mis-incidencias.php" class="btn btn-primary mb-2">
                     <i class="fas fa-list me-2"></i>Ver Mis Incidencias
                 </a>
-            </div>
+                
+                <hr class="mt-2 mb-2">
+                <h5 class="card-title">Gestión de Problemas</h5>
+                <p class="card-text">Revise y gestione problemas conocidos (Errores Raíz).</p>
+                <a href="problemas.php" class="btn btn-warning">
+                    <i class="fas fa-exclamation-circle me-2"></i>Ver Problemas
+                </a>
+                </div>
         </div>
     </div>
     
@@ -322,6 +324,7 @@ $estadisticas_problemas = $stmt_problemas_estadisticas->fetch(PDO::FETCH_ASSOC);
 </div>
 
 <style>
+/* ... (estilos CSS) ... */
 .card.border-left-primary {
     border-left: .25rem solid #4e73df!important;
 }

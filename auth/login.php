@@ -68,17 +68,14 @@ try {
             case 'Administrador':
                 header("Location: ../views/admin/dashboard.php");
                 break;
-            case 'Coordinador TI CEDIS':
-            case 'Coordinador TI Sucursales':
-            case 'Coordinador TI Corporativo':
+            case 'Coordinador':
                 header("Location: ../views/coordinador/dashboard.php");
                 break;
             case 'Técnico':
                 header("Location: ../views/tecnico/dashboard.php");
                 break;
-            case 'Supervisor Infraestructura':
-            case 'Supervisor Sistemas':
-                header("Location: ../views/supervisor/dashboard.php");
+            case 'Investigador':
+                header("Location: ../views/tecnico/dashboard.php");
                 break;
             case 'Encargado Inventario':
                 header("Location: ../views/inventario/dashboard.php");

@@ -5,8 +5,10 @@ require_once '../../config/database.php';
 require_once '../../models/Problema.php';
 
 // Verificar permiso de gestión de problemas
-check_permission('gestionar_problemas');
-
+if (!in_array($_SESSION['role_name'], ['Coordinador', 'Administrador'])) {
+    header('Location: ../../access_denied.php');
+    exit;
+}
 // Verificar que se ha proporcionado un ID
 if (!isset($_GET['id']) || empty($_GET['id'])) {
     header("Location: problemas.php?error=missing_id");

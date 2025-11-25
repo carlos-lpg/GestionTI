@@ -16,9 +16,10 @@ $incidencia_id = intval($_GET['id']);
 $database = new Database();
 $conn = $database->getConnection();
 
-// Obtener detalles de la incidencia
+// OBTENER DETALLES DE LA INCIDENCIA (AÑADE CAMPOS DE ANÁLISIS)
 $query = "SELECT i.ID, i.Descripcion, i.FechaInicio, i.ID_Prioridad, i.ID_CI, 
                  i.ID_Tecnico, i.ID_Stat, i.CreatedBy,
+                 i.ID_Categoria, i.TiempoEstimadoHoras, i.RequiereComponente, i.ID_Servicio, 
                  p.Descripcion as Prioridad, s.Descripcion as Estado,
                  ci.Nombre as CI_Nombre, t.Nombre as CI_Tipo, ci.NumSerie as CI_NumSerie,
                  emp.Nombre as Reportado_Por_Nombre, emp.Email as Reportado_Por_Email
@@ -76,6 +77,19 @@ $stmt_estados = $conn->prepare($query_estados);
 $stmt_estados->execute();
 $estados = $stmt_estados->fetchAll(PDO::FETCH_ASSOC);
 
+// OBTENER CATEGORÍAS DISPONIBLES (USANDO TU TABLA CATEGORIA_PROBLEMA)
+$query_categorias = "SELECT ID, Nombre FROM CATEGORIA_PROBLEMA ORDER BY Nombre";
+$stmt_categorias = $conn->prepare($query_categorias);
+$stmt_categorias->execute();
+$categorias = $stmt_categorias->fetchAll(PDO::FETCH_ASSOC);
+
+// OBTENER SERVICIOS DISPONIBLES (NUEVO)
+$query_servicios = "SELECT ID, NombreServicio FROM SERVICIO_CATALOGO ORDER BY NombreServicio";
+$stmt_servicios = $conn->prepare($query_servicios);
+$stmt_servicios->execute();
+$servicios = $stmt_servicios->fetchAll(PDO::FETCH_ASSOC);
+
+
 // Obtener datos adicionales en paralelo
 $stmt_respuestas = $conn->prepare("SELECT r.ID, r.Respuesta, p.Pregunta, p.Tipo
                                    FROM CONTROL_RESPUESTA r
@@ -92,11 +106,18 @@ $stmt_comentarios = $conn->prepare("SELECT TOP 5 c.Comentario, c.FechaRegistro, 
 $stmt_respuestas->execute([$incidencia_id]);
 $stmt_comentarios->execute([$incidencia_id]);
 
+
 // Procesar el formulario
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nuevo_estado = $_POST['nuevo_estado'] ?? '';
     $comentario = $_POST['comentario'] ?? '';
     $solucion = $_POST['solucion'] ?? '';
+    
+    // CAPTURA CAMPOS NUEVOS DE ANÁLISIS (Paso 5 y 6)
+    $id_categoria = $_POST['id_categoria'] ?? null;
+    $id_servicio = $_POST['id_servicio'] ?? null;
+    $tiempo_estimado = $_POST['tiempo_estimado'] ?? null;
+    $requiere_componente = $_POST['requiere_componente'] ?? ''; // Valor: '1', '0' o ''
     
     if (empty($nuevo_estado) || empty($comentario)) {
         $error = "Por favor complete todos los campos obligatorios.";
@@ -110,17 +131,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $params[] = $nuevo_estado;
         $params[] = $_SESSION['user_id'];
         
+        // AGREGAR LOS NUEVOS CAMPOS AL UPDATE
+        if (!empty($id_servicio)) { 
+            $query_update .= ", ID_Servicio = ?";
+            $params[] = $id_servicio;
+        } else {
+            $query_update .= ", ID_Servicio = NULL";
+        }
+        
+        if (!empty($id_categoria)) {
+            $query_update .= ", ID_Categoria = ?";
+            $params[] = $id_categoria;
+        } else {
+            $query_update .= ", ID_Categoria = NULL";
+        }
+        
+        if (!empty($tiempo_estimado)) {
+            $query_update .= ", TiempoEstimadoHoras = ?";
+            $params[] = $tiempo_estimado;
+        } else {
+            $query_update .= ", TiempoEstimadoHoras = NULL";
+        }
+        
+        // Manejar correctamente el campo RequiereComponente
+        if ($requiere_componente !== '') {
+            $query_update .= ", RequiereComponente = ?";
+            $params[] = intval($requiere_componente);
+        } else {
+            $query_update .= ", RequiereComponente = NULL";
+        }
+        
         // Si el nuevo estado es "Resuelta", registrar la solución
         if ($nuevo_estado == 5) { // 5 = Resuelta
             if (empty($solucion)) {
                 $error = "Debe proporcionar una descripción de la solución para marcar como resuelta.";
-                // Detener la ejecución si hay error
-                if (isset($error)) {
-                    // No continuar con el procesamiento
-                } else {
-                    $tipo_comentario = 'SOLUCION';
-                    $query_update .= ", FechaTerminacion = GETDATE()";
-                }
             } else {
                 $tipo_comentario = 'SOLUCION';
                 $query_update .= ", FechaTerminacion = GETDATE()";
@@ -152,18 +196,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                           VALUES (?, ?, ?, ?, GETDATE(), 1)");
             $stmt_comment->execute([$incidencia_id, $_SESSION['user_id'], $comentario, $tipo_comentario]);
             
-            // Redireccionar tras éxito
-            header("Location: ver-incidencia.php?id=$incidencia_id&success=updated");
-            exit;
+            // LÓGICA DE REDIRECCIÓN CONDICIONAL:
+            // SÓLO redirige a solicitar-componente.php si se marcó "Sí" ('1') en el formulario.
+            // LÓGICA DE REDIRECCIÓN CONDICIONAL:
+            if ($requiere_componente === '1') {
+                // CAMBIO: Agregar el parámetro &req=1 a la URL
+                header("Location: solicitar-componente.php?id=$incidencia_id&req=1");
+                exit;
+            } else {
+                // Si no requiere componente, redirige a ver-incidencia con éxito.
+                header("Location: ver-incidencia.php?id=$incidencia_id&success=incident_updated");
+                exit;
+            }
         }
     }
 }
 ?>
 
-<!-- Título de la página -->
 <h1 class="h2">Actualizar Incidencia #<?php echo $incidencia_id; ?></h1>
 
-<!-- Botones de acción -->
 <div class="row mb-4">
     <div class="col-12">
         <a href="mis-incidencias.php" class="btn btn-secondary">
@@ -181,15 +232,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 <?php endif; ?>
 
-<!-- Formulario de actualización -->
 <div class="row">
     <div class="col-md-8">
         <div class="card mb-4">
             <div class="card-header">
-                <h5 class="mb-0">Actualizar Estado de la Incidencia</h5>
+                <h5 class="mb-0">Actualizar Estado y Análisis de la Incidencia</h5>
             </div>
             <div class="card-body">
                 <form action="" method="POST">
+                    
+                    <div class="card mb-4 border-info">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="fas fa-stethoscope me-2"></i>Análisis y Clasificación Técnica</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6"> <label for="id_servicio" class="form-label">Servicio Aplicado (Paso 5):</label> 
+                                    <select class="form-select" id="id_servicio" name="id_servicio">
+                                        <option value="">Seleccionar Servicio...</option>
+                                        <?php foreach ($servicios as $serv): ?>
+                                            <option value="<?php echo $serv['ID']; ?>" 
+                                                <?php echo ($incidencia['ID_Servicio'] == $serv['ID']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($serv['NombreServicio']); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="id_categoria" class="form-label">Categoría de la Incidencia (Paso 5):</label>
+                                    <select class="form-select" id="id_categoria" name="id_categoria">
+                                        <option value="">Seleccionar Categoría...</option>
+                                        <?php foreach ($categorias as $cat): ?>
+                                            <option value="<?php echo $cat['ID']; ?>" 
+                                                <?php echo ($incidencia['ID_Categoria'] == $cat['ID']) ? 'selected' : ''; ?>>
+                                                <?php echo htmlspecialchars($cat['Nombre']); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="tiempo_estimado" class="form-label">Tiempo Estimado (horas) (Paso 5):</label>
+                                    <input type="number" class="form-control" id="tiempo_estimado" name="tiempo_estimado" 
+                                           value="<?php echo htmlspecialchars($incidencia['TiempoEstimadoHoras'] ?? ''); ?>" 
+                                           min="0.5" step="0.5" placeholder="Ej: 2.5">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">¿Requiere Componente? (Paso 6):</label>
+                                    <div>
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="radio" name="requiere_componente" id="req_comp_si" value="1" 
+                                                   <?php echo ($incidencia['RequiereComponente'] === 1) ? 'checked' : ''; ?>>
+                                            <label class="form-check-label" for="req_comp_si">Sí</label>
+                                        </div>
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="radio" name="requiere_componente" id="req_comp_no" value="0" 
+                                                   <?php echo ($incidencia['RequiereComponente'] === 0) ? 'checked' : ''; ?>>
+                                            <label class="form-check-label" for="req_comp_no">No</label>
+                                        </div>
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="radio" name="requiere_componente" id="req_comp_na" value="" 
+                                                   <?php echo ($incidencia['RequiereComponente'] === null || $incidencia['RequiereComponente'] === '') ? 'checked' : ''; ?>>
+                                            <label class="form-check-label" for="req_comp_na">Pendiente / N/A</label>
+                                        </div>
+                                    </div>
+                                    <div class="form-text">Si marca **Sí**, el sistema lo redirigirá a solicitar el componente después de guardar.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="row mb-3">
                         <div class="col-md-6">
                             <label for="estado_actual" class="form-label">Estado Actual:</label>
@@ -344,9 +456,4 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             seccionSolucion.style.display = 'none';
             solucionTextarea.removeAttribute('required');
-        }
-    });
-});
-</script>
-
-<?php require_once '../../includes/footer.php'; ?>
+        }\n    });\n});\n</script>\n\n<?php require_once '../../includes/footer.php'; ?>

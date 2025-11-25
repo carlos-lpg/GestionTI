@@ -42,33 +42,51 @@ class Usuario {
                   INNER JOIN ROL r ON u.ID_Rol = r.ID
                   INNER JOIN EMPLEADO e ON u.ID_Empleado = e.ID
                   WHERE u.Username = ?";
-        
+    
         // Preparar la consulta
         $stmt = $this->conn->prepare($query);
         
-        // Vincular parámetros
-        $stmt->execute([$username]);
+        // Asignar valores
+        $username = htmlspecialchars(strip_tags($username));
+        $stmt->bindParam(1, $username);
         
-        // Obtener los detalles del usuario
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        // Log de información del usuario encontrado
-        if ($row) {
-            error_log("Usuario encontrado - ID: {$row['ID']}, Username: {$row['Username']}, Estado: {$row['Estado']}");
-            error_log("Password en BD: {$row['Password']}, Password ingresada: $password");
-        } else {
-            error_log("Usuario NO encontrado para: $username");
+        // Ejecutar la consulta
+        if (!$stmt->execute()) {
+            error_log("Error de ejecución de consulta de login: " . implode(", ", $stmt->errorInfo()));
             return false;
         }
     
+        // Obtener los detalles del usuario
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Verificar si se encontró el usuario
+        if (!$row) {
+            error_log("Login fallido: Usuario no encontrado");
+            return false;
+        }
+
         // Verificar estado del usuario
         if($row['Estado'] != 1) {
             error_log("Login fallido: Usuario inactivo");
             return false;
         }
         
-        // Verificar la contraseña 
-        if($password === $row['Password']) {  // Usar === para comparación estricta
+        // ----------------------------------------------------------------------------------
+        // MODIFICACIÓN DE SEGURIDAD: Verificar la contraseña hasheada o en texto plano
+        // ----------------------------------------------------------------------------------
+        $password_ok = false;
+        
+        // 1. Verificar si la contraseña almacenada es un hash (empieza con '$')
+        if (strpos($row['Password'], '$') === 0) {
+            // Usar password_verify() para contraseñas hasheadas (MÉTODO SEGURO)
+            $password_ok = password_verify($password, $row['Password']);
+        } else {
+            // 2. Si no es un hash, comparar como texto plano (COMPATIBILIDAD INSEGURA)
+            $password_ok = ($password === $row['Password']);
+        }
+        // ----------------------------------------------------------------------------------
+        
+        if($password_ok) { 
             // Asignar valores a las propiedades del objeto
             $this->id = $row['ID'];
             $this->username = $row['Username'];
@@ -89,73 +107,58 @@ class Usuario {
             
             return true;
         } else {
-            error_log("Login FALLIDO: Contraseña incorrecta");
+            error_log("Login FALLIDO: Contraseña incorrecta para usuario {$username}");
             return false;
         }
     }
-    
+
     /**
-     * Actualizar la fecha del último acceso del usuario
-     * @return boolean True si se actualizó correctamente
+     * Actualiza el campo UltimoAcceso del usuario
      */
     public function update_last_login() {
-        $query = "UPDATE " . $this->table_name . " 
-                  SET UltimoAcceso = GETDATE() 
-                  WHERE ID = ?";
-        
-        // Preparar la consulta
+        $query = "UPDATE " . $this->table_name . " SET UltimoAcceso = GETDATE() WHERE ID = :id";
         $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(':id', $this->id);
         
-        // Ejecutar la consulta
-        return $stmt->execute([$this->id]);
+        if (!$stmt->execute()) {
+             error_log("Error al actualizar último acceso para usuario {$this->username}: " . implode(", ", $stmt->errorInfo()));
+        }
     }
     
+    // --- MÉTODOS CRUD (EJEMPLOS SIMPLIFICADOS) ---
+
     /**
-     * Obtener todos los usuarios
-     * @return PDOStatement Resultado de la consulta
+     * Leer todos los usuarios (para gestión de usuarios)
      */
-    public function getAll() {
-        $query = "SELECT u.ID, u.Username, u.Estado, u.UltimoAcceso, 
-                         e.Nombre as NombreEmpleado, r.Nombre as NombreRol
+    public function readAll() {
+        $query = "SELECT u.ID, u.Username, u.UltimoAcceso, u.Estado, r.Nombre as rol_nombre, e.Nombre as empleado_nombre 
                   FROM " . $this->table_name . " u 
-                  INNER JOIN EMPLEADO e ON u.ID_Empleado = e.ID
                   INNER JOIN ROL r ON u.ID_Rol = r.ID
-                  ORDER BY u.Username";
-        
-        // Preparar la consulta
+                  INNER JOIN EMPLEADO e ON u.ID_Empleado = e.ID
+                  ORDER BY u.ID DESC";
         $stmt = $this->conn->prepare($query);
-        
-        // Ejecutar la consulta
         $stmt->execute();
-        
         return $stmt;
     }
-    
+
     /**
-     * Obtener un usuario por su ID
-     * @param integer $id ID del usuario
-     * @return boolean True si se encontró el usuario
+     * Leer un solo usuario por ID
      */
-    public function getById($id) {
-        $query = "SELECT u.ID, u.Username, u.Password, u.Estado, u.UltimoAcceso, 
+    public function readOne($id) {
+        $query = "SELECT u.ID, u.Username, u.Password, u.UltimoAcceso, u.Estado, 
                          u.ID_Empleado, u.ID_Rol, r.Nombre as rol_nombre, e.Nombre as empleado_nombre,
-                         e.Email as empleado_email
+                         e.Email as empleado_email, e.Celular, e.Direccion
                   FROM " . $this->table_name . " u 
                   INNER JOIN ROL r ON u.ID_Rol = r.ID
                   INNER JOIN EMPLEADO e ON u.ID_Empleado = e.ID
-                  WHERE u.ID = ?";
-        
-        // Preparar la consulta
+                  WHERE u.ID = ?
+                  LIMIT 0,1";
         $stmt = $this->conn->prepare($query);
-        
-        // Ejecutar la consulta
-        $stmt->execute([$id]);
-        
-        // Verificar si se encontró el usuario
-        if($stmt->rowCount() > 0) {
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            // Asignar valores a las propiedades
+        $stmt->bindParam(1, $id);
+        $stmt->execute();
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($row) {
             $this->id = $row['ID'];
             $this->username = $row['Username'];
             $this->password = $row['Password'];
@@ -166,117 +169,58 @@ class Usuario {
             $this->nombre_rol = $row['rol_nombre'];
             $this->nombre_empleado = $row['empleado_nombre'];
             $this->email_empleado = $row['empleado_email'];
-            
             return true;
         }
-        
         return false;
     }
-    
+
     /**
      * Crear un nuevo usuario
-     * @return boolean True si se creó correctamente
+     * (Este método es generalmente más complejo ya que debe crear el EMPLEADO primero)
      */
-    public function create() {
+    public function create($username, $password, $estado, $id_rol, $id_empleado) {
+        // En el archivo agregar-usuario.php, la contraseña ya debe venir hasheada.
+        
         $query = "INSERT INTO " . $this->table_name . " 
                   (Username, Password, Estado, ID_Empleado, ID_Rol) 
-                  VALUES (?, ?, ?, ?, ?)";
+                  VALUES (:username, :password, :estado, :id_empleado, :id_rol)";
         
-        // Preparar la consulta
         $stmt = $this->conn->prepare($query);
         
-        // Ejecutar la consulta
-        return $stmt->execute([
-            $this->username,
-            $this->password, // En un entorno real, usar password_hash()
-            $this->estado,
-            $this->id_empleado,
-            $this->id_rol
-        ]);
-    }
-    
-    /**
-     * Actualizar un usuario existente
-     * @return boolean True si se actualizó correctamente
-     */
-    public function update() {
-        $query = "UPDATE " . $this->table_name . " 
-                  SET Username = ?, Estado = ?, ID_Empleado = ?, ID_Rol = ? 
-                  WHERE ID = ?";
-        
-        // Si hay una nueva contraseña, actualizarla también
-        if(!empty($this->password)) {
-            $query = "UPDATE " . $this->table_name . " 
-                      SET Username = ?, Password = ?, Estado = ?, ID_Empleado = ?, ID_Rol = ? 
-                      WHERE ID = ?";
-            
-            // Preparar la consulta
-            $stmt = $this->conn->prepare($query);
-            
-            // Ejecutar la consulta
-            return $stmt->execute([
-                $this->username,
-                $this->password, // En un entorno real, usar password_hash()
-                $this->estado,
-                $this->id_empleado,
-                $this->id_rol,
-                $this->id
-            ]);
-        } else {
-            // Preparar la consulta sin actualizar contraseña
-            $stmt = $this->conn->prepare($query);
-            
-            // Ejecutar la consulta
-            return $stmt->execute([
-                $this->username,
-                $this->estado,
-                $this->id_empleado,
-                $this->id_rol,
-                $this->id
-            ]);
+        // Sanear
+        $username = htmlspecialchars(strip_tags($username));
+        $estado = intval($estado);
+        $id_empleado = intval($id_empleado);
+        $id_rol = intval($id_rol);
+        // $password ya está hasheada y se asume saneada
+
+        // Asignar
+        $stmt->bindParam(':username', $username);
+        $stmt->bindParam(':password', $password);
+        $stmt->bindParam(':estado', $estado);
+        $stmt->bindParam(':id_empleado', $id_empleado);
+        $stmt->bindParam(':id_rol', $id_rol);
+
+        if($stmt->execute()){
+            // Obtener el ID del usuario recién creado
+            $this->id = $this->conn->lastInsertId();
+            return true;
         }
+
+        error_log("Error al crear usuario: " . implode(", ", $stmt->errorInfo()));
+        return false;
     }
-    
+
+    // --- FIN MÉTODOS CRUD ---
+
     /**
-     * Eliminar un usuario
-     * @param integer $id ID del usuario a eliminar
-     * @return boolean True si se eliminó correctamente
-     */
-    public function delete($id) {
-        $query = "DELETE FROM " . $this->table_name . " WHERE ID = ?";
-        
-        // Preparar la consulta
-        $stmt = $this->conn->prepare($query);
-        
-        // Ejecutar la consulta
-        return $stmt->execute([$id]);
-    }
-    
-    /**
-     * Cambiar el estado de un usuario (activar/desactivar)
-     * @param integer $id ID del usuario
-     * @param integer $estado Nuevo estado (1 = activo, 0 = inactivo)
-     * @return boolean True si se actualizó correctamente
-     */
-    public function cambiarEstado($id, $estado) {
-        $query = "UPDATE " . $this->table_name . " SET Estado = ? WHERE ID = ?";
-        
-        // Preparar la consulta
-        $stmt = $this->conn->prepare($query);
-        
-        // Ejecutar la consulta
-        return $stmt->execute([$estado, $id]);
-    }
-    
-    /**
-     * Obtener los permisos del usuario basados en su rol
-     * @return array Array con los permisos del usuario
+     * Obtener los permisos del usuario basado en su rol
+     * @return array Permisos del rol
      */
     public function obtenerPermisos() {
-        // Permisos basados en roles
         $permisos = [];
         
-        switch($this->nombre_rol) {
+        switch ($this->nombre_rol) {
             case 'Administrador':
                 $permisos = [
                     'admin' => true,
@@ -287,10 +231,7 @@ class Usuario {
                     'gestionar_problemas' => true
                 ];
                 break;
-                
-            case 'Coordinador TI CEDIS':
-            case 'Coordinador TI Sucursales':
-            case 'Coordinador TI Corporativo':
+            case 'Coordinador':
                 $permisos = [
                     'admin' => false,
                     'gestionar_usuarios' => false,
@@ -300,49 +241,41 @@ class Usuario {
                     'gestionar_problemas' => true
                 ];
                 break;
-                
-            case 'Técnico TI':
+            case 'Técnico':
                 $permisos = [
                     'admin' => false,
                     'gestionar_usuarios' => false,
                     'gestionar_ci' => false,
-                    'gestionar_incidencias' => true,
-                    'ver_reportes' => false
+                    'gestionar_incidencias' => false,
+                    'ver_reportes' => true,
+                    'gestionar_problemas' => true
                 ];
                 break;
-                
+            // ******************************************************
+            // NUEVO ROL: INVESTIGADOR (Mismos permisos que Técnico + Problemas)
+            // ******************************************************
+            case 'Investigador': 
+                $permisos = [
+                    'admin' => false,
+                    'gestionar_usuarios' => false,
+                    'gestionar_ci' => false,
+                    'gestionar_incidencias' => false,
+                    'ver_reportes' => true,
+                    'gestionar_problemas' => true
+                ];
+                break;
+            // ******************************************************
             case 'Supervisor Infraestructura':
-            case 'Supervisor Sistemas':
                 $permisos = [
                     'admin' => false,
                     'gestionar_usuarios' => false,
-                    'gestionar_ci' => true,
-                    'gestionar_incidencias' => false,
+                    'gestionar_ci' => true, // Puede gestionar CIs
+                    'gestionar_incidencias' => true,
                     'ver_reportes' => true
                 ];
                 break;
                 
-            case 'Encargado Inventario':
-                $permisos = [
-                    'admin' => false,
-                    'gestionar_usuarios' => false,
-                    'gestionar_ci' => true,
-                    'gestionar_incidencias' => false,
-                    'ver_reportes' => false
-                ];
-                break;
-                
-            case 'Gerente TI':
-                $permisos = [
-                    'admin' => false,
-                    'gestionar_usuarios' => false,
-                    'gestionar_ci' => false,
-                    'gestionar_incidencias' => false,
-                    'ver_reportes' => true
-                ];
-                break;
-                
-            default: // Usuario Final
+            default: // Usuario Final y otros roles no definidos
                 $permisos = [
                     'admin' => false,
                     'gestionar_usuarios' => false,

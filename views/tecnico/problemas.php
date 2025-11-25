@@ -3,7 +3,7 @@
 require_once '../../includes/header.php';
 
 // Verificar permiso de gestión de problemas
-if (!in_array($_SESSION['role_name'], ['Técnico TI', 'Coordinador TI CEDIS', 'Coordinador TI Sucursales', 'Coordinador TI Corporativo', 'Supervisor Infraestructura', 'Supervisor Sistemas', 'admin'])) {
+if (!in_array($_SESSION['role_name'], ['Técnico', 'Coordinador', 'Administrador', 'Investigador'])) { // <-- Modificar aquí
     header('Location: ../../access_denied.php');
     exit;
 }
@@ -17,6 +17,24 @@ $database = new Database();
 $conn = $database->getConnection();
 
 $problema = new Problema($conn);
+
+// --- LÓGICA DE ASIGNACIÓN RÁPIDA ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] == 'asignar_rapido') {
+    $prob_id = intval($_POST['problema_id']);
+    $tecnico_id = $_SESSION['empleado_id']; // ID del empleado actual
+    $user_id = $_SESSION['user_id'];
+    
+    // Asignar el problema al empleado actual
+    if ($problema->asignarResponsable($prob_id, $tecnico_id, $user_id)) {
+        header("Location: problemas.php?success=assigned");
+        exit;
+    } else {
+        header("Location: problemas.php?error=assign_failed");
+        exit;
+    }
+}
+// --- FIN LÓGICA DE ASIGNACIÓN RÁPIDA ---
+
 
 // Obtener parámetros de filtrado
 $filtro_estado = isset($_GET['estado']) ? $_GET['estado'] : '';
@@ -51,10 +69,8 @@ $responsables = $problema->getResponsablesPotenciales()->fetchAll(PDO::FETCH_ASS
 $estadisticas = $problema->getEstadisticas();
 ?>
 
-<!-- Título de la página -->
 <h1 class="h2">Gestión de Problemas</h1>
 
-<!-- Mensajes de éxito o error -->
 <?php if (isset($_GET['success'])): ?>
     <div class="alert alert-success">
         <?php
@@ -68,6 +84,9 @@ $estadisticas = $problema->getEstadisticas();
                 break;
             case 'deleted':
                 echo 'El problema ha sido eliminado exitosamente.';
+                break;
+            case 'assigned': // Nuevo mensaje
+                echo 'El problema ha sido asignado a usted exitosamente.';
                 break;
             default:
                 echo 'Operación realizada con éxito.';
@@ -90,6 +109,9 @@ $estadisticas = $problema->getEstadisticas();
             case 'delete_failed':
                 echo 'No se pudo eliminar el problema. Verifique si hay elementos relacionados.';
                 break;
+            case 'assign_failed': // Nuevo mensaje
+                echo 'Error al asignar el problema. Intente nuevamente.';
+                break;
             default:
                 echo 'Ha ocurrido un error al procesar su solicitud.';
         }
@@ -97,7 +119,6 @@ $estadisticas = $problema->getEstadisticas();
     </div>
 <?php endif; ?>
 
-<!-- Botón para agregar nuevo problema -->
 <div class="row mb-4">
     <div class="col-12">
         <a href="agregar-problema.php" class="btn btn-success">
@@ -106,7 +127,6 @@ $estadisticas = $problema->getEstadisticas();
     </div>
 </div>
 
-<!-- Estadísticas rápidas -->
 <div class="row mb-4">
     <div class="col-xl-3 col-md-6 mb-4">
         <div class="card border-left-primary shadow h-100 py-2">
@@ -173,7 +193,6 @@ $estadisticas = $problema->getEstadisticas();
     </div>
 </div>
 
-<!-- Filtros -->
 <div class="row mb-4">
     <div class="col-12">
         <div class="card">
@@ -234,7 +253,6 @@ $estadisticas = $problema->getEstadisticas();
     </div>
 </div>
 
-<!-- Lista de problemas -->
 <div class="row">
     <div class="col-12">
         <div class="card">
@@ -283,7 +301,14 @@ $estadisticas = $problema->getEstadisticas();
                                         ?>
                                     </td>
                                     <td><?php echo date('d/m/Y', strtotime($prob['FechaIdentificacion'])); ?></td>
-                                    <td><?php echo htmlspecialchars($prob['ResponsableNombre'] ?? 'Sin asignar'); ?></td>
+                                    <td>
+                                        <?php 
+                                        echo htmlspecialchars($prob['ResponsableNombre'] ?? 'Sin asignar');
+                                        if ($prob['ResponsableNombre'] && $prob['ResponsableRol']) {
+                                            echo "<br><small class='text-muted'>(" . htmlspecialchars($prob['ResponsableRol']) . ")</small>";
+                                        }
+                                        ?>
+                                    </td>
                                     <td>
                                         <?php 
                                         $estado = htmlspecialchars($prob['Estado']);
@@ -312,6 +337,16 @@ $estadisticas = $problema->getEstadisticas();
                                         <a href="editar-problema.php?id=<?php echo $prob['ID']; ?>" class="btn btn-sm btn-warning" title="Editar">
                                             <i class="fas fa-edit"></i>
                                         </a>
+                                        
+                                        <?php if (!$prob['ResponsableID']): ?>
+                                            <form method="POST" action="" style="display:inline;" onsubmit="return confirm('¿Asignarse este problema?');">
+                                                <input type="hidden" name="action" value="asignar_rapido">
+                                                <input type="hidden" name="problema_id" value="<?php echo $prob['ID']; ?>">
+                                                <button type="submit" class="btn btn-sm btn-primary" title="Asignarse">
+                                                    <i class="fas fa-user-plus"></i>
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
                                         
                                         <?php if (has_permission('admin')): ?>
                                         <a href="eliminar-problema.php?id=<?php echo $prob['ID']; ?>" class="btn btn-sm btn-danger" title="Eliminar">

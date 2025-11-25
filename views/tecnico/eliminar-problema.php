@@ -5,7 +5,7 @@ require_once '../../config/database.php';
 require_once '../../models/Problema.php';
 
 // Verificar permiso de gestión de problemas
-if (!in_array($_SESSION['role_name'], ['Técnico TI', 'Coordinador TI CEDIS', 'Coordinador TI Sucursales', 'Coordinador TI Corporativo', 'Supervisor Infraestructura', 'Supervisor Sistemas', 'admin'])) {
+if (!in_array($_SESSION['role_name'], ['Coordinador', 'Administrador'])) {
     header('Location: ../../access_denied.php');
     exit;
 }

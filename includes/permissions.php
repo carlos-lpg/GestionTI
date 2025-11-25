@@ -12,10 +12,7 @@ if (!isset($_SESSION['user_id'])) {
 // Verificar permiso de gestión de CIs - MANERA ALTERNATIVA SIN permissions.php
 // Si el archivo permissions.php no existe, verificamos manualmente
 $tiene_permiso = false;
-$roles_permitidos = ['Administrador', 'Gerente TI', 'Encargado Inventario', 
-                    'Coordinador TI CEDIS', 'Coordinador TI Sucursales', 
-                    'Coordinador TI Corporativo', 'Supervisor Infraestructura', 
-                    'Supervisor Sistemas', 'Técnico TI'];
+$roles_permitidos = ['Administrador', 'Coordinador','Usuario', 'Técnico', 'Investigador'];
 
 if (isset($_SESSION['role_name']) && in_array($_SESSION['role_name'], $roles_permitidos)) {
     $tiene_permiso = true;
