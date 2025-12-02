@@ -3,7 +3,8 @@
 require_once '../../includes/header.php';
 
 // Verificar permiso de gestión de problemas
-if (!in_array($_SESSION['role_name'], ['Técnico', 'Coordinador', 'Administrador', 'Investigador'])) { // <-- Modificar aquí
+// NOTA: He expandido los roles aquí para incluir roles comunes que podrían gestionar problemas
+if (!in_array($_SESSION['role_name'], ['Técnico', 'Coordinador', 'Administrador', 'Investigador', 'Supervisor'])) {
     header('Location: ../../access_denied.php');
     exit;
 }
@@ -39,6 +40,32 @@ $stmt_historial = $problema->getHistorialEstados($problema_id);
 $stmt_soluciones = $problema->getSolucionesPropuestas($problema_id);
 $stmt_incidencias = $problema->getIncidenciasAsociadas($problema_id);
 $estados = $problema->getEstados()->fetchAll(PDO::FETCH_ASSOC);
+
+
+// ---------------------------------------------------------------------------------
+// --- NUEVA LÓGICA PARA LA TABLA COMPARATIVA (Causa Raíz y Solución Permanente) ---
+// ---------------------------------------------------------------------------------
+
+// 1. Obtener la última 'Causa Raíz' (asumimos que es el último comentario de tipo ANALISIS o INVESTIGACION)
+$query_causa = "SELECT TOP 1 Comentario FROM PROBLEMA_COMENTARIO 
+                WHERE ID_Problema = ? AND TipoComentario IN ('ANALISIS', 'INVESTIGACION')
+                ORDER BY FechaRegistro DESC";
+$stmt_causa = $conn->prepare($query_causa);
+$stmt_causa->execute([$problema_id]);
+$causa_raiz = $stmt_causa->fetchColumn() ?: 'Pendiente de Análisis/Investigación';
+
+// 2. Obtener la última 'Solución Permanente'
+$query_solucion = "SELECT TOP 1 Descripcion FROM PROBLEMA_SOLUCION_PROPUESTA 
+                   WHERE ID_Problema = ? AND TipoSolucion = 'SOLUCION_PERMANENTE'
+                   ORDER BY FechaRegistro DESC";
+$stmt_solucion = $conn->prepare($query_solucion);
+$stmt_solucion->execute([$problema_id]);
+$solucion_final = $stmt_solucion->fetchColumn() ?: 'Pendiente de Solución Permanente';
+
+// ---------------------------------------------------------------------------------
+// --- FIN LÓGICA ADICIONAL ---
+// ---------------------------------------------------------------------------------
+
 
 // Procesar el formulario de comentario si se envía
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] == 'agregar_comentario') {
@@ -274,7 +301,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <td>
                                     <?php 
                                     // OBTENER NOMBRE Y ROL DEL CREADOR (CORREGIDO)
-                                    // Asumiendo que la columna del rol en la tabla ROL se llama 'Nombre'
+                                    // Se corrige la consulta asumiendo que la columna del rol en la tabla ROL se llama 'Nombre'
                                     $query_usuario = "SELECT e.Nombre, r.Nombre as Rol FROM USUARIO u JOIN EMPLEADO e ON u.ID_Empleado = e.ID JOIN ROL r ON e.ID_Rol = r.ID WHERE u.ID = ?";
                                     $stmt_usuario = $conn->prepare($query_usuario);
                                     $stmt_usuario->execute([$problema->created_by]);
@@ -310,7 +337,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         </div>
     </div>
 </div>
-
+<div class="row">
+    <div class="col-12">
+        <div class="card mb-4 border-primary">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Resumen Ejecutivo del Problema</h5>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-bordered mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 33%">Problemática (Síntomas)</th>
+                            <th style="width: 33%">Causa Raíz Determinada</th>
+                            <th style="width: 33%">Solución (Acción Correctiva)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <p class="mb-0 small"><?php echo nl2br(htmlspecialchars($problema->descripcion)); ?></p>
+                            </td>
+                            <td>
+                                <p class="mb-0 small text-danger fw-bold"><?php echo nl2br(htmlspecialchars($causa_raiz)); ?></p>
+                                <p class="text-muted small mt-1 mb-0">*(Basado en el último comentario de Análisis/Investigación)*</p>
+                            </td>
+                            <td>
+                                <p class="mb-0 small text-success fw-bold"><?php echo nl2br(htmlspecialchars($solucion_final)); ?></p>
+                                <p class="text-muted small mt-1 mb-0">*(Basado en la última Solución Permanente)*</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
 <div class="row">
     <div class="col-12">
         <div class="card mb-4 border-info">
@@ -641,7 +702,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Función para desasociar una incidencia
 function desasociarIncidencia(problemaId, incidenciaId) {
     if (confirm('¿Está seguro de que desea desasociar esta incidencia del problema?')) {
-        // MEJORA: Asumiendo que existe desasociar-incidencia.php
+        // MEJORA: Asumiendo que existe desasociar-incidencia.php para manejar esta acción
         window.location.href = 'desasociar-incidencia.php?problema_id=' + problemaId + '&incidencia_id=' + incidenciaId;
     }
 }

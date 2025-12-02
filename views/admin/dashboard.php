@@ -6,11 +6,9 @@ require_once '../../includes/header.php';
 check_permission('admin');
 ?>
 
-<!-- Título de la página -->
 <h1 class="h2">Panel de Administración</h1>
 
 <div class="row my-4">
-    <!-- Tarjeta de Usuarios -->
     <div class="col-md-4">
         <div class="card card-dashboard">
             <div class="card-body">
@@ -21,7 +19,6 @@ check_permission('admin');
         </div>
     </div>
     
-    <!-- Tarjeta de CIs -->
     <div class="col-md-4">
         <div class="card card-dashboard">
             <div class="card-body">
@@ -32,7 +29,6 @@ check_permission('admin');
         </div>
     </div>
     
-    <!-- Tarjeta de Incidencias -->
     <div class="col-md-4">
         <div class="card card-dashboard">
             <div class="card-body">
@@ -45,30 +41,19 @@ check_permission('admin');
 </div>
 
 <div class="row my-4">
-    <!-- Tarjeta de Reportes -->
-    <div class="col-md-6">
+    
+    <div class="col-md-4">
         <div class="card card-dashboard">
             <div class="card-body">
-                <h5 class="card-title">Reportes</h5>
-                <p class="card-text">Acceso a reportes y estadísticas del sistema.</p>
-                <a href="reportes.php" class="btn btn-primary">Ver Reportes</a>
+                <h5 class="card-title">Problemas (Causa Raíz)</h5>
+                <p class="card-text">Gestión de problemas conocidos y corrección de causa raíz.</p>
+                <a href="../tecnico/problemas.php" class="btn btn-warning">Gestionar Problemas</a>
             </div>
         </div>
     </div>
 
-    <!-- Tarjeta de Configuración -->
-    <div class="col-md-6">
-        <div class="card card-dashboard">
-            <div class="card-body">
-                <h5 class="card-title">Configuración del Sistema</h5>
-                <p class="card-text">Parámetros generales del sistema.</p>
-                <a href="configuracion.php" class="btn btn-primary">Configurar Sistema</a>
-            </div>
-        </div>
     </div>
-</div>
 
-<!-- Resumen de estadísticas -->
 <div class="row my-4">
     <div class="col-12">
         <div class="table-container">
